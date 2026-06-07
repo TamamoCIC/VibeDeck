@@ -1,0 +1,61 @@
+{
+  "description": "VibeDeck Claude Code integration — reports agent status to VibeDeck",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${VIBEDECK_ADAPTER_DIR}/hook.sh",
+            "timeout": 3000
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${VIBEDECK_ADAPTER_DIR}/hook.sh",
+            "timeout": 3000
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${VIBEDECK_ADAPTER_DIR}/hook.sh",
+            "timeout": 3000
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${VIBEDECK_ADAPTER_DIR}/hook.sh",
+            "timeout": 3000
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${VIBEDECK_ADAPTER_DIR}/hook.sh",
+            "timeout": 3000
+          }
+        ]
+      }
+    ]
+  }
+}

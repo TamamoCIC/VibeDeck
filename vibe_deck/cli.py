@@ -41,31 +41,15 @@ def main():
 
     sub = parser.add_subparsers(dest="command", help="Available commands")
 
-    # serve
     _serve_parser(sub)
-
-    # status
     _status_parser(sub)
-
-    # widget
+    _demo_parser(sub)
     _widget_parser(sub)
-
-    # layout
     _layout_parser(sub)
-
-    # adapter
     _adapter_parser(sub)
-
-    # config
     _config_parser(sub)
-
-    # info
     _info_parser(sub)
-
-    # mcp
     _mcp_parser(sub)
-
-    # skill
     _skill_parser(sub)
 
     args = parser.parse_args()
@@ -73,17 +57,16 @@ def main():
     if args.debug:
         logging.basicConfig(level=logging.DEBUG)
     else:
-        logging.basicConfig(level=logging.INFO,
-                            format="%(message)s")
+        logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     if args.command is None:
         parser.print_help()
         return
 
-    # Dispatch
     cmd_map = {
         "serve": cmd_serve,
         "status": cmd_status,
+        "demo": cmd_demo,
         "widget": cmd_widget,
         "layout": cmd_layout,
         "adapter": cmd_adapter,
@@ -103,28 +86,37 @@ def main():
 
 
 def _serve_parser(sub):
-    p = sub.add_parser("serve", help="Start the VibeDeck daemon")
+    p = sub.add_parser("serve", help="Start the VibeDeck daemon",
+        description="Start the VibeDeck daemon with Web UI. Use --demo for sample widgets.",
+        epilog="Example: vibe-deck serve --demo --port 9734")
     p.add_argument("--port", type=int, default=9734, help="HTTP server port (default: 9734)")
     p.add_argument("--render", choices=["sim", "hardware"], default="sim",
                    help="Render target: sim (browser) or hardware (real Deck)")
     p.add_argument("--device", type=int, default=0, help="Stream Deck device index (--render hardware)")
     p.add_argument("--no-autodetect", action="store_true", help="Disable agent auto-discovery")
+    p.add_argument("--demo", action="store_true", help="Start with sample widgets for development")
 
 
 def _status_parser(sub):
-    p = sub.add_parser("status", help="Show agent and deck status (terminal dashboard)")
+    p = sub.add_parser("status", help="Show agent and deck status (terminal dashboard)",
+        epilog="Example: vibe-deck status --watch")
     p.add_argument("--watch", action="store_true", help="Live-updating dashboard")
     p.add_argument("--json", action="store_true", help="Machine-readable JSON output")
+
+
+def _demo_parser(sub):
+    sub.add_parser("demo", help="Start daemon with demo widgets (alias for serve --demo)",
+        description="Start VibeDeck in demo mode with sample widgets. Equivalent to: vibe-deck serve --demo")
 
 
 def _widget_parser(sub):
     p = sub.add_parser("widget", help="Manage Widgets")
     wp = p.add_subparsers(dest="widget_command")
-    # widget list
-    wl = wp.add_parser("list", help="List all active Widgets")
+    wl = wp.add_parser("list", help="List all active Widgets",
+        epilog="Example: vibe-deck widget list --json")
     wl.add_argument("--json", action="store_true")
-    # widget add
-    wa = wp.add_parser("add", help="Add a Widget manually")
+    wa = wp.add_parser("add", help="Add a Widget manually",
+        epilog="Example: vibe-deck widget add --type command --name 'Open Terminal' --key 15")
     wa.add_argument("--type", choices=["agent", "system", "command", "approval"], required=True)
     wa.add_argument("--name", required=True, help="Widget display name")
     wa.add_argument("--key", type=int, help="Key index to place it on")
@@ -133,31 +125,31 @@ def _widget_parser(sub):
 def _layout_parser(sub):
     p = sub.add_parser("layout", help="Manage deck layouts")
     lp = p.add_subparsers(dest="layout_command")
-    # layout list
     lp.add_parser("list", help="List available layouts")
-    # layout load
-    ll = lp.add_parser("load", help="Load a layout")
+    ll = lp.add_parser("load", help="Load a layout",
+        epilog="Example: vibe-deck layout load my-layout")
     ll.add_argument("name", help="Layout name (from ~/.vibe-deck/layouts/)")
-    # layout save
-    ls = lp.add_parser("save", help="Save current layout")
+    ls = lp.add_parser("save", help="Save current layout",
+        epilog="Example: vibe-deck layout save --name my-layout")
     ls.add_argument("--name", required=True, help="Layout name")
 
 
 def _adapter_parser(sub):
     p = sub.add_parser("adapter", help="Manage adapters")
     ap = p.add_subparsers(dest="adapter_command")
-    # adapter list
-    al = ap.add_parser("list", help="List installed adapters")
+    al = ap.add_parser("list", help="List installed adapters",
+        epilog="Example: vibe-deck adapter list --json")
     al.add_argument("--json", action="store_true")
     al.add_argument("--builtin", action="store_true", help="Only built-in adapters")
     al.add_argument("--community", action="store_true", help="Only community adapters")
-    # adapter install
-    ai = ap.add_parser("install", help="Install a community adapter")
+    ai = ap.add_parser("install", help="Install a community adapter",
+        epilog="Example: vibe-deck adapter install ./my-adapter")
     ai.add_argument("source", help="Path or URL to adapter")
 
 
 def _config_parser(sub):
-    c = sub.add_parser("config", help="View configuration")
+    c = sub.add_parser("config", help="View configuration",
+        epilog="Example: vibe-deck config --path")
     c.add_argument("--path", action="store_true", help="Show config file path")
 
 
@@ -168,21 +160,19 @@ def _info_parser(sub):
 def _mcp_parser(sub):
     p = sub.add_parser("mcp", help="MCP server management")
     mp = p.add_subparsers(dest="mcp_command")
-    # mcp serve
-    ms = mp.add_parser("serve", help="Start MCP server (stdio transport)")
-    ms.add_argument("--stdio", action="store_true", default=True, help="Use stdio transport")
+    ms = mp.add_parser("serve", help="Start MCP server (stdio transport for AI agents)",
+        epilog="Example: vibe-deck mcp serve")
 
 
 def _skill_parser(sub):
     p = sub.add_parser("skill", help="VibeDeck Skill management")
     sp = p.add_subparsers(dest="skill_command")
-    # skill list
     sp.add_parser("list", help="List installed skills")
-    # skill install
-    si = sp.add_parser("install", help="Install a skill")
+    si = sp.add_parser("install", help="Install a skill",
+        epilog="Example: vibe-deck skill install claude-code")
     si.add_argument("source", help="Skill name, path, or URL")
-    # skill remove
-    sr = sp.add_parser("remove", help="Remove a skill")
+    sr = sp.add_parser("remove", help="Remove a skill",
+        epilog="Example: vibe-deck skill remove claude-code")
     sr.add_argument("name", help="Skill name")
 
 
@@ -191,81 +181,77 @@ def _skill_parser(sub):
 
 def cmd_serve(args):
     """Start the VibeDeck daemon."""
-    from .config import load_config
-    from .core.layout import LayoutEngine
-    from .core.message_bus import MessageBus
-    from .web.server import VibeDeckWebServer
-
-    config = load_config()
-    config.port = args.port
-    config.render = args.render
-    if args.no_autodetect:
-        config.autodetect = False
-
-    print(f"🦞 VibeDeck {__version__}")
-    print(f"   Render: {config.render}")
-    print(f"   Port:   {config.port}")
+    print(f"\n🦞  VibeDeck {__version__}")
+    print(f"   Render:   {args.render}")
+    print(f"   Web UI:   http://localhost:{args.port}")
+    print(f"   Demo:     {'yes' if args.demo else 'no'}")
     print(f"   Ctrl+C to stop\n")
 
-    bus = MessageBus()
-    engine = LayoutEngine()
-    server = VibeDeckWebServer(engine, port=config.port)
-
-    async def _run():
-        await server.start()
-
-        # Keep running until SIGTERM / SIGINT
-        try:
-            while True:
-                await asyncio.sleep(1)
-        except asyncio.CancelledError:
-            pass
-        finally:
-            await server.stop()
+    from .core.event_loop import run_supervisor
 
     try:
-        asyncio.run(_run())
+        asyncio.run(run_supervisor(
+            port=args.port,
+            render=args.render,
+            device_index=args.device,
+            autodetect=not args.no_autodetect,
+            demo=args.demo,
+        ))
     except KeyboardInterrupt:
         print("\n👋 VibeDeck stopped.")
+
+
+def cmd_demo(args):
+    """Start daemon in demo mode."""
+    ns = argparse.Namespace(
+        port=9734, render="sim", device=0,
+        no_autodetect=True, demo=True,
+    )
+    cmd_serve(ns)
 
 
 def cmd_status(args):
     """Show terminal dashboard of agent and deck state."""
     if args.watch:
-        _cmd_status_watch()
+        _cmd_status_watch(args)
         return
 
+    # Try to get live data from daemon, fall back to mock
     status_data = _get_status_data()
 
-    if args.json:
+    if getattr(args, 'json', False):
         print(json.dumps(status_data, indent=2))
         return
 
-    # Pretty-print
-    print("🦞 VibeDeck Status")
+    print("\n🦞  VibeDeck Status")
     print(f"   Time: {time.strftime('%H:%M:%S')}")
     print()
 
-    if not status_data.get("agents"):
-        print("   No agents detected. Start a supported agent (Claude Code, OpenCode, etc.)")
+    agents = status_data.get("agents", [])
+    if not agents:
+        print("   No agents detected.")
+        print("   Start a supported agent or run: vibe-deck demo")
         print()
         return
 
-    print(f"{'AGENT':<16} {'STATUS':<14} {'ICON':<6} INFO")
+    # Table
+    print(f" {'AGENT':<16} {'STATUS':<14} {'ICON':<6} {'INFO':<20}")
     print("-" * 60)
-    for agent in status_data["agents"]:
-        print(f" {agent['name']:<15} {agent['status']:<14} {agent.get('icon',''):<6} {agent.get('info','')}")
+    for a in agents:
+        icon = a.get('icon', '')
+        print(f" {a['name']:<15} {a['status']:<14} {icon:<6} {a.get('info', ''):<20}")
     print()
 
 
-def _cmd_status_watch():
-    """Live-updating terminal dashboard (simple ANSI refresh)."""
+def _cmd_status_watch(args):
+    """Live-updating terminal dashboard."""
     try:
         while True:
-            # Clear screen and move cursor to top
-            sys.stdout.write("\033[2J\033[H")
-            cmd_status(argparse.Namespace(json=False, watch=False))
-            sys.stdout.write(" [Live — Ctrl+C to exit]")
+            sys.stdout.write("\033[2J\033[H")  # Clear screen
+            # Use a non-json namespace for display
+            ns = argparse.Namespace(json=False, watch=False)
+            cmd_status(ns)
+            sys.stdout.write(" [Live — updating every 2s — Ctrl+C to exit]\n")
             sys.stdout.flush()
             time.sleep(2)
     except KeyboardInterrupt:
@@ -273,36 +259,56 @@ def _cmd_status_watch():
 
 
 def _get_status_data() -> dict:
-    """Collect status from the daemon (or local fallback for testing)."""
-    # In production: connect to daemon's Web API.
-    # For Issue #1 scaffold, return mock data.
-    return {
-        "version": __version__,
-        "agents": [],  # populated by connectors once daemon is running
-        "deck": {"connected": False, "type": "none"},
-    }
+    """Collect status data."""
+    try:
+        import urllib.request
+        resp = urllib.request.urlopen("http://localhost:9734/api/frame")
+        data = json.loads(resp.read())
+        agents = []
+        for k in data.get("keys", []):
+            if k.get("widget_id"):
+                agents.append({
+                    "name": k["widget_id"],
+                    "status": k.get("label", "unknown"),
+                    "icon": k.get("icon", ""),
+                    "info": k.get("type", ""),
+                })
+        return {"version": __version__, "agents": agents}
+    except Exception:
+        return {"version": __version__, "agents": []}
 
 
 def cmd_widget(args):
     """Widget CRUD."""
     if args.widget_command == "list":
-        print("No active widgets. Start the daemon first (vibe-deck serve).")
+        status = _get_status_data()
+        agents = status.get("agents", [])
+        if args.json:
+            print(json.dumps(agents, indent=2))
+        elif agents:
+            for a in agents:
+                print(f"  {a['icon']} {a['name']} [{a['status']}] ({a['info']})")
+        else:
+            print("No active widgets. Start the daemon first (vibe-deck serve).")
     elif args.widget_command == "add":
-        print(f"Adding widget: type={args.type} name={args.name}")
+        print(f"Adding widget: type={args.type} name={args.name} key={args.key}")
     else:
         print("Usage: vibe-deck widget {list|add}")
 
 
 def cmd_layout(args):
     """Layout management."""
+    from .config import LAYOUTS_DIR
+
     if args.layout_command == "list":
-        from .config import LAYOUTS_DIR
         layouts = sorted(LAYOUTS_DIR.glob("*.yaml")) if LAYOUTS_DIR.exists() else []
         if layouts:
+            print(f"Layouts in {LAYOUTS_DIR}:")
             for l in layouts:
                 print(f"  📄 {l.stem}")
         else:
-            print("No saved layouts. Create one from the Web Editor.")
+            print(f"No saved layouts in {LAYOUTS_DIR}")
+            print("Create one from the Web Editor or vibe-deck layout save.")
     elif args.layout_command == "load":
         print(f"Loading layout: {args.name}")
     elif args.layout_command == "save":
@@ -315,26 +321,28 @@ def cmd_adapter(args):
     """Adapter management."""
     if args.adapter_command == "list":
         builtin = ["claude-code", "opencode", "openclaw", "telegram"]
+        from .config import ADAPTERS_DIR
+
         if args.community:
-            # Scan ~/.vibe-deck/adapters/ for community adapters
-            from .config import ADAPTERS_DIR
-            community = list(ADAPTERS_DIR.glob("*/adapter.yaml")) if ADAPTERS_DIR.exists() else []
-            for c in community:
-                print(f"  🧩 {c.parent.name} (community)")
-            if not community:
+            community = sorted(ADAPTERS_DIR.glob("*/adapter.yaml")) if ADAPTERS_DIR.exists() else []
+            if community:
+                for c in community:
+                    print(f"  🧩 {c.parent.name} (community)")
+            else:
                 print("No community adapters installed.")
+                print(f"Install to: {ADAPTERS_DIR}/<name>/adapter.yaml")
             return
 
-        if not args.community:
-            print("Built-in adapters:")
-            for a in builtin:
-                print(f"  🦞 {a}")
-        print(f"\n  {len(builtin)} built-in | use --community for community adapters")
+        print("Built-in adapters:")
+        for a in builtin:
+            print(f"  🦞 {a}")
 
         if args.json:
             print(json.dumps({"builtin": builtin, "community": []}, indent=2))
     elif args.adapter_command == "install":
         print(f"Installing adapter from: {args.source}")
+        from .config import ADAPTERS_DIR
+        print(f"Target: {ADAPTERS_DIR}/")
     else:
         print("Usage: vibe-deck adapter {list|install}")
 
@@ -347,16 +355,18 @@ def cmd_config(args):
     else:
         config = load_config()
         print(f"Config file: {CONFIG_FILE}")
-        print(f"Port:       {config.port}")
-        print(f"Render:     {config.render}")
-        print(f"Autodetect: {config.autodetect}")
-        print(f"Device:     #{config.device_index}")
+        print(f"Port:        {config.port}")
+        print(f"Render:      {config.render}")
+        print(f"Autodetect:  {config.autodetect}")
+        print(f"Device:      #{config.device_index}")
         if config.agent_patterns:
-            print(f"Agent patterns:")
+            print("Agent patterns:")
             for ap in config.agent_patterns:
-                print(f"  - {ap.name}: {ap.process} (args={ap.args_contains})")
+                print(f"  - {ap.name}: {ap.process}")
+        else:
+            print("Agent patterns: (none — add to ~/.vibe-deck/config.yaml)")
         if config.mcp_servers:
-            print(f"MCP servers:")
+            print("MCP servers:")
             for ms in config.mcp_servers:
                 print(f"  - {ms.name}: {' '.join(ms.command)}")
 
@@ -367,7 +377,7 @@ def cmd_info(args):
     decks = HardwareRenderer.discover()
     if not decks:
         print("⚠️  No Stream Deck devices detected.")
-        print("   Check USB connection and udev rules.")
+        print("   Check USB connection and udev rules: sudo cp rules /etc/udev/rules.d/")
         print("   Install: pip install vibe-deck[deck]")
         return
 
@@ -387,18 +397,31 @@ def cmd_info(args):
 def cmd_mcp(args):
     """MCP server management."""
     if args.mcp_command == "serve":
-        print("MCP server starting on stdio...")
-        # In production: start MCP server loop. For scaffold, print stub.
+        print("🦞 VibeDeck MCP Server starting on stdio...")
+        from .mcp.server import run_mcp_server
+        try:
+            asyncio.run(run_mcp_server())
+        except KeyboardInterrupt:
+            print("\n👋 MCP server stopped.")
     else:
         print("Usage: vibe-deck mcp serve")
 
 
 def cmd_skill(args):
     """Skill management."""
+    from .config import SKILLS_DIR
     if args.skill_command == "list":
-        print("Installed skills: (none yet)")
+        skills = sorted(SKILLS_DIR.glob("*/skill.yaml")) if SKILLS_DIR.exists() else []
+        if skills:
+            for s in skills:
+                print(f"  🎯 {s.parent.name}")
+        else:
+            print("No skills installed.")
+            print("Install: vibe-deck skill install <name>")
     elif args.skill_command == "install":
         print(f"Installing skill: {args.source}")
+        SKILLS_DIR.mkdir(parents=True, exist_ok=True)
+        print(f"Target: {SKILLS_DIR}/")
     elif args.skill_command == "remove":
         print(f"Removing skill: {args.name}")
     else:

@@ -1,0 +1,33 @@
+# Telegram Adapter — VibeDeck
+name: telegram
+version: "1.0.0"
+description: "Monitor Telegram messages on VibeDeck"
+author: "VibeDeck Team"
+
+status_map:
+  unread:
+    icon: "💬"
+    color: "#6366f1"
+    animation: pulse
+    label: "Telegram"
+  idle:
+    icon: "💤"
+    color: "#374151"
+    animation: none
+    label: "Telegram"
+  offline:
+    icon: "⚫"
+    color: "#374151"
+    animation: none
+    label: "Offline"
+
+# Telethon monitor setup (run manually or via systemd)
+monitor:
+  script: monitor.py
+  requires:
+    - telethon
+  setup: |
+    1. Get API credentials: https://my.telegram.org/apps
+    2. Set env vars: TG_API_ID, TG_API_HASH, TG_PHONE
+    3. Run: python -m vibe_deck.adapters.telegram.monitor
+  session_file: "~/.vibe-deck/adapters/telegram/session"

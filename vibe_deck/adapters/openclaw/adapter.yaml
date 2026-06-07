@@ -1,0 +1,43 @@
+# OpenClaw Adapter — VibeDeck
+name: openclaw
+version: "1.0.0"
+description: "Monitor OpenClaw agents on VibeDeck"
+author: "VibeDeck Team"
+
+detection:
+  process: "openclaw"
+  args_contains: []
+
+status_map:
+  running:
+    icon: "🦞"
+    color: "#22c55e"
+    animation: crawl
+    label: "Running"
+  idle:
+    icon: "🦞"
+    color: "#166534"
+    animation: none
+    label: "Idle"
+  error:
+    icon: "🔴"
+    color: "#ef4444"
+    animation: blink
+    label: "Error"
+  approval:
+    icon: "🟡"
+    color: "#eab308"
+    animation: blink
+    label: "Approve"
+  offline:
+    icon: "⚫"
+    color: "#374151"
+    animation: none
+    label: "Offline"
+
+connection:
+  type: websocket
+  default_url: "ws://127.0.0.1:18789"
+  auth:
+    mode: token
+    token_env: "OPENCLAW_GATEWAY_TOKEN"

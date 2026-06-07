@@ -1,0 +1,51 @@
+# Claude Code Adapter — VibeDeck
+name: claude-code
+version: "1.0.0"
+description: "Monitor Claude Code sessions on VibeDeck"
+author: "VibeDeck Team"
+
+# Process auto-detection
+detection:
+  process: "claude"
+  args_contains:
+    - "--agent"
+  cmdline_regex: null
+
+# Status → Display mapping
+status_map:
+  running:
+    icon: "🐙"
+    color: "#22c55e"
+    animation: crawl
+    label: "Running"
+  idle:
+    icon: "🐙"
+    color: "#166534"
+    animation: none
+    label: "Idle"
+  waiting_for_user:
+    icon: "🐙"
+    color: "#eab308"
+    animation: blink
+    label: "Waiting"
+  error:
+    icon: "🔴"
+    color: "#ef4444"
+    animation: blink
+    label: "Error"
+  offline:
+    icon: "⚫"
+    color: "#374151"
+    animation: none
+    label: "Offline"
+
+# Hook integration
+hooks:
+  config_file: hooks.json
+  script: hook.sh
+  events:
+    SessionStart: running
+    PreToolUse: running
+    PostToolUse: running
+    UserPromptSubmit: waiting_for_user
+    Stop: idle

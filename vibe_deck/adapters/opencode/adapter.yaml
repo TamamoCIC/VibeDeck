@@ -1,0 +1,42 @@
+# OpenCode Adapter — VibeDeck
+name: opencode
+version: "1.0.0"
+description: "Monitor OpenCode sessions on VibeDeck"
+author: "VibeDeck Team"
+
+detection:
+  process: "opencode"
+  args_contains:
+    - "serve"
+
+status_map:
+  running:
+    icon: "🦊"
+    color: "#22c55e"
+    animation: crawl
+    label: "Busy"
+  idle:
+    icon: "🦊"
+    color: "#166534"
+    animation: none
+    label: "Idle"
+  error:
+    icon: "🔴"
+    color: "#ef4444"
+    animation: blink
+    label: "Retrying"
+  approval:
+    icon: "🟡"
+    color: "#eab308"
+    animation: blink
+    label: "Approve"
+  offline:
+    icon: "⚫"
+    color: "#374151"
+    animation: none
+    label: "Offline"
+
+connection:
+  type: sse
+  default_url: "http://localhost:4096"
+  endpoint: "/event"
