@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VibeDeck Simulator</title>
+<style>
+  :root {
+    --bg: #1a1a2e;
+    --panel: #16213e;
+    --key-gap: 4px;
+    --text: #e0e0e0;
+    --accent: #22c55e;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 20px;
+  }
+  h1 { margin-bottom: 4px; font-size: 1.4rem; }
+  .subtitle { color: #888; font-size: 0.85rem; margin-bottom: 16px; }
+
+  .toolbar {
+    display: flex; gap: 12px; margin-bottom: 16px; align-items: center;
+  }
+  select, button {
+    background: var(--panel); color: var(--text); border: 1px solid #333;
+    padding: 6px 12px; border-radius: 6px; font-size: 0.85rem; cursor: pointer;
+  }
+  button:hover { background: #1f2a4a; }
+
+  .deck-grid {
+    display: grid;
+    gap: var(--key-gap);
+    background: #111;
+    padding: 8px;
+    border-radius: 12px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+  }
+  .key {
+    width: 72px; height: 72px;
+    border-radius: 6px;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    cursor: pointer;
+    transition: transform 0.1s, filter 0.15s;
+    position: relative;
+    font-size: 1.5rem;
+  }
+  .key:hover { filter: brightness(1.2); }
+  .key:active { transform: scale(0.93); }
+  .key .label {
+    font-size: 0.6rem; margin-top: 2px; text-align: center;
+    max-width: 90%; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .key .badge {
+    position: absolute; top: 3px; right: 5px;
+    background: #ef4444; color: white; font-size: 0.55rem;
+    font-weight: bold; border-radius: 50%; width: 16px; height: 16px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .key.pulse { animation: pulse 1.5s ease-in-out infinite; }
+  .key.blink { animation: blink 0.8s ease-in-out infinite; }
+  .key.crawl { animation: crawl 3s ease-in-out infinite; }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+  @keyframes blink {
+    0%, 50% { opacity: 1; }
+    51%, 100% { opacity: 0.3; }
+  }
+  @keyframes crawl {
+    0%, 100% { filter: brightness(1); }
+    50% { filter: brightness(1.3) saturate(1.3); }
+  }
+
+  .status-bar {
+    margin-top: 12px; font-size: 0.75rem; color: #666;
+  }
+  .connected { color: var(--accent); }
+</style>
+</head>
+<body>
+  <h1>🦞 VibeDeck Simulator</h1>
+  <p class="subtitle">Virtual Stream Deck — edit layouts, test widgets, no hardware needed</p>
+
+  <div class="toolbar">
+    <select id="deckType" onchange="changeDeck()">
+      <option value="Stream Deck Mini">Stream Deck Mini (2×3)</option>
+      <option value="Stream Deck">Stream Deck (3×5)</option>
+      <option value="Stream Deck XL" selected>Stream Deck XL (4×8)</option>
+    </select>
+    <button onclick="toggleMode()">Mode: <span id="modeLabel">Live</span></button>
+    <span class="status-bar" id="status">Connecting...</span>
+  </div>
+
+  <div class="deck-grid" id="deck"></div>
+
+  <p class="status-bar" style="margin-top:16px" id="log">Click a key to simulate press</p>
+
+  <script>
+    const DECK_SIZES = {
+      'Stream Deck Mini': { rows: 2, cols: 3 },
+      'Stream Deck': { rows: 3, cols: 5 },
+      'Stream Deck XL': { rows: 4, cols: 8 },
+    };
+
+    let currentDeck = 'Stream Deck XL';
+    let mode = 'live';
+    let keyData = [];
+
+    function buildGrid(deckType) {
+      const size = DECK_SIZES[deckType];
+      const grid = document.getElementById('deck');
+      grid.style.gridTemplateColumns = `repeat(${size.cols}, 72px)`;
+      grid.style.gridTemplateRows = `repeat(${size.rows}, 72px)`;
+      grid.innerHTML = '';
+
+      for (let i = 0; i < size.rows * size.cols; i++) {
+        const key = document.createElement('div');
+        key.className = 'key';
+        key.style.backgroundColor = '#111';
+        key.dataset.index = i;
+        key.onclick = () => pressKey(i);
+        grid.appendChild(key);
+      }
+    }
+
+    function pressKey(i) {
+      document.getElementById('log').textContent = `Key ${i} pressed`;
+      fetch(`/api/key/${i}`, { method: 'POST' }).catch(() => {});
+    }
+
+    function changeDeck() {
+      currentDeck = document.getElementById('deckType').value;
+      buildGrid(currentDeck);
+    }
+
+    function toggleMode() {
+      mode = mode === 'live' ? 'edit' : 'live';
+      document.getElementById('modeLabel').textContent = mode === 'live' ? 'Live' : 'Edit';
+      document.getElementById('log').textContent = `Mode: ${mode}`;
+    }
+
+    // SSE connection for live frame updates
+    function connectSSE() {
+      const evtSource = new EventSource('/api/events');
+      evtSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'frame') {
+            updateKeys(data.keys);
+            document.getElementById('status').innerHTML = '<span class="connected">● Live</span>';
+          }
+        } catch(e) {}
+      };
+      evtSource.onerror = () => {
+        document.getElementById('status').textContent = 'Disconnected';
+        // Retry after 3s
+        setTimeout(() => { evtSource.close(); connectSSE(); }, 3000);
+      };
+      evtSource.onopen = () => {
+        document.getElementById('status').textContent = 'Connected';
+      };
+    }
+
+    function updateKeys(keys) {
+      const deckEl = document.getElementById('deck');
+      keys.forEach(k => {
+        const keyEl = deckEl.querySelector(`[data-index="${k.index}"]`);
+        if (!keyEl) return;
+        keyEl.style.backgroundColor = k.color || '#111';
+
+        // Clear content
+        keyEl.innerHTML = '';
+
+        // Icon
+        if (k.icon) {
+          const iconSpan = document.createElement('span');
+          iconSpan.textContent = k.icon;
+          iconSpan.style.fontSize = '1.5rem';
+          keyEl.appendChild(iconSpan);
+        }
+
+        // Label
+        if (k.label) {
+          const labelSpan = document.createElement('span');
+          labelSpan.className = 'label';
+          labelSpan.textContent = k.label;
+          keyEl.appendChild(labelSpan);
+        }
+
+        // Badge
+        if (k.badge) {
+          const badgeSpan = document.createElement('span');
+          badgeSpan.className = 'badge';
+          badgeSpan.textContent = k.badge;
+          keyEl.appendChild(badgeSpan);
+        }
+
+        // Animation class
+        keyEl.classList.remove('pulse', 'blink', 'crawl');
+        if (k.animation && k.animation !== 'none') {
+          keyEl.classList.add(k.animation);
+        }
+      });
+    }
+
+    // Init
+    buildGrid(currentDeck);
+    connectSSE();
+  </script>
+</body>
+</html>
