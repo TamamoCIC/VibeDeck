@@ -47,6 +47,11 @@ class FileWatcher(BaseConnector):
                         "Install: pip install watchfiles")
             return
         self._watch_dir.mkdir(parents=True, exist_ok=True)
+
+        # Scan existing status files at startup
+        for f in self._watch_dir.glob("*.json"):
+            await self._handle_change(watchfiles.Change.added, f)
+
         self._task = asyncio.create_task(self._watch_loop())
         log.info("File watcher started (dir=%s)", self._watch_dir)
 

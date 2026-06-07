@@ -94,6 +94,18 @@ def ensure_dirs() -> None:
         d.mkdir(parents=True, exist_ok=True)
 
 
+def _default_config() -> VibeDeckConfig:
+    """Build the default configuration with built-in agent patterns."""
+    return VibeDeckConfig(
+        agent_patterns=[
+            AgentPattern(name="claude-code", process="claude"),
+            AgentPattern(name="claude-code", process="claude.exe"),
+            AgentPattern(name="opencode", process="opencode", args_contains=["serve"]),
+            AgentPattern(name="openclaw", process="openclaw"),
+        ]
+    )
+
+
 def load_config(path: Path | None = None) -> VibeDeckConfig:
     """Load configuration from disk, creating defaults if absent."""
     ensure_dirs()
@@ -101,7 +113,7 @@ def load_config(path: Path | None = None) -> VibeDeckConfig:
     config_path = path or CONFIG_FILE
 
     if not config_path.exists():
-        default = VibeDeckConfig()
+        default = _default_config()
         save_config(default, config_path)
         return default
 

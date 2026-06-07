@@ -113,10 +113,11 @@ class VibeDeckSupervisor:
         ]
 
         for i, (wid, icon, color, anim, label, wtype, meta) in enumerate(demos):
+            badge_val = str(meta["unread"]) if meta.get("unread") else None
             ws = WidgetState(
                 id=wid,
                 type=wtype,
-                display=DisplayState(icon=icon, color=color, animation=anim, label=label, badge=meta.get("unread")),
+                display=DisplayState(icon=icon, color=color, animation=anim, label=label, badge=badge_val),
                 meta=meta,
             )
             self._engine.frame.place_widget(ws, i)
