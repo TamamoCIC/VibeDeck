@@ -1,0 +1,41 @@
+[project]
+name = "vibe-deck"
+version = "0.1.0"
+description = "A Stream Deck toolkit for Vibe Coding & local AI orchestration on Linux"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "TamamoCIC", email = "tamamo@vibedeck.dev"},
+]
+
+keywords = ["streamdeck", "elgato", "vibe-coding", "ai-orchestration", "linux"]
+
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Hardware",
+    "Topic :: Scientific/Engineering :: Human Machine Interface",
+]
+
+dependencies = [
+    "Pillow>=10.0.0",
+]
+
+[project.optional-dependencies]
+deck = ["streamdeck>=0.9.4"]
+full = ["vibe-deck[deck]", "psutil>=5.9"]
+
+[project.urls]
+Homepage = "https://github.com/TamamoCIC/VibeDeck"
+Repository = "https://github.com/TamamoCIC/VibeDeck"
+Documentation = "https://github.com/TamamoCIC/VibeDeck"
+
+[project.scripts]
+vibe-deck = "vibe_deck.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["vibe_deck*"]
