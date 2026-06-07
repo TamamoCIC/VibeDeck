@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# VibeDeck Launcher — Linux/macOS
+# Usage: ./vibe-deck serve --demo
+set -euo pipefail
+cd "$(dirname "$0")"
+PYTHONUTF8=1 python -m vibe_deck.cli "$@"
