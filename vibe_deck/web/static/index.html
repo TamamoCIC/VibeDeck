@@ -207,6 +207,63 @@
     .key .label { font-size: 0.45rem; max-width: 40px; }
     .toolbar select, .toolbar button { font-size: 0.75rem; padding: 5px 10px; }
   }
+
+  /* Modal */
+  .modal {
+    position: fixed; inset: 0; z-index: 100;
+    background: rgba(0,0,0,0.6);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .modal-card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 14px; padding: 0; max-width: 440px; width: 90%;
+    max-height: 80vh; overflow-y: auto;
+  }
+  .modal-header, .modal-footer { padding: 14px 18px; display: flex; align-items: center; justify-content: space-between; }
+  .modal-header { border-bottom: 1px solid var(--border); }
+  .modal-header h3 { font-size: 1rem; margin: 0; }
+  .modal-footer { border-top: 1px solid var(--border); }
+  .modal-close, .popover-close {
+    background: none; border: none; color: var(--text-dim);
+    font-size: 1.1rem; cursor: pointer; padding: 4px 8px; border-radius: 4px;
+  }
+  .modal-close:hover, .popover-close:hover { background: var(--surface); }
+  .modal-body { padding: 16px 18px; }
+  .dim { color: var(--text-dim); font-size: 0.85rem; }
+
+  /* Appearance editor rows */
+  .evt-row {
+    display: grid; grid-template-columns: 2fr 1fr auto auto 2fr;
+    gap: 6px; align-items: center; padding: 6px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    font-size: 0.8rem;
+  }
+  .evt-row .evt-name { font-weight: 600; color: var(--text); }
+  .evt-row input, .evt-row select {
+    background: var(--surface); border: 1px solid var(--border);
+    color: var(--text); padding: 4px 6px; border-radius: 5px;
+    font-size: 0.78rem; width: 100%; box-sizing: border-box;
+  }
+  .evt-row input[type=color] { width: 32px; height: 28px; padding: 1px; }
+
+  /* Popover (key inspector) */
+  .popover {
+    position: fixed; z-index: 99; min-width: 220px; max-width: 280px;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+  }
+  .popover-header {
+    padding: 8px 10px; display: flex; align-items: center;
+    justify-content: space-between; border-bottom: 1px solid var(--border);
+    font-size: 0.82rem;
+  }
+  .popover-body { padding: 10px; font-size: 0.75rem; line-height: 1.5; }
+  .popover-body .insp-label { color: var(--text-dim); font-size: 0.68rem; text-transform: uppercase; }
+  .popover-body .insp-val { color: var(--text); margin-bottom: 6px; }
+  .popover-body .insp-swatch {
+    display: inline-block; width: 14px; height: 14px; border-radius: 3px;
+    vertical-align: middle; margin-right: 4px; border: 1px solid var(--border);
+  }
 </style>
 </head>
 <body>
@@ -226,7 +283,10 @@
     <option value="4x8" selected>4×8 (XL)</option>
   </select>
   <button id="btnMode" onclick="toggleMode()" class="active">🔍 Live</button>
-  <button onclick="resetDeck()">🔄 Reset</button>
+  <button onclick="showVisualConfig()" title="Widget appearance editor">🎨 Visual</button>
+  <button onclick="showSaveDialog()" title="Save layout">💾 Save</button>
+  <button onclick="showLoadDialog()" title="Load layout">📂 Load</button>
+  <button onclick="showThemeEditor()" title="UI theme colors">💅 Theme</button>
   <span class="status-text">
     <span class="status-dot waiting" id="statusDot"></span>
     <span id="statusLabel">Connecting...</span>
@@ -250,6 +310,68 @@
 </div>
 
 </div><!-- /app-view -->
+
+<!-- ═══ Key Inspector Popover ═══ -->
+<div id="keyInspector" class="popover" style="display:none">
+  <div class="popover-header">
+    <strong id="inspKeyIdx">Key 0</strong>
+    <button class="popover-close" onclick="hideInspector()">✕</button>
+  </div>
+  <div class="popover-body" id="inspBody"></div>
+</div>
+
+<!-- ═══ Visual Config Modal ═══ -->
+<div id="visualModal" class="modal" style="display:none">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3>🎨 Widget Appearance</h3>
+      <button class="modal-close" onclick="closeModal('visualModal')">✕</button>
+    </div>
+    <div class="modal-body" id="visualBody"><p class="dim">Loading...</p></div>
+    <div class="modal-footer">
+      <button class="wizard-btn" onclick="saveAppearance()">💾 Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Theme Editor Modal ═══ -->
+<div id="themeModal" class="modal" style="display:none">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3>💅 UI Theme</h3>
+      <button class="modal-close" onclick="closeModal('themeModal')">✕</button>
+    </div>
+    <div class="modal-body" id="themeBody"><p class="dim">Loading...</p></div>
+    <div class="modal-footer">
+      <button class="wizard-btn" onclick="saveTheme()">💾 Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Save Layout Dialog ═══ -->
+<div id="saveModal" class="modal" style="display:none">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3>💾 Save Layout</h3>
+      <button class="modal-close" onclick="closeModal('saveModal')">✕</button></div>
+    <div class="modal-body">
+      <input class="wizard-input" id="saveName" placeholder="Layout name" maxlength="40">
+    </div>
+    <div class="modal-footer">
+      <button class="wizard-btn" onclick="saveLayout()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Load Layout Dialog ═══ -->
+<div id="loadModal" class="modal" style="display:none">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3>📂 Load Layout</h3>
+      <button class="modal-close" onclick="closeModal('loadModal')">✕</button></div>
+    <div class="modal-body" id="loadList"><p class="dim">Loading...</p></div>
+  </div>
+</div>
 
 <!-- ═══ Setup Wizard View ═══ -->
 <div id="wizard-view" style="display:none">
@@ -412,13 +534,14 @@
     const btn = document.getElementById('btnMode');
     if (mode === 'live') {
       mode = 'edit';
-      btn.textContent = '✏️ Edit';
+      btn.textContent = '✏️ Inspect';
       btn.classList.remove('active');
-      document.getElementById('log').textContent = 'Edit mode (layout editing coming soon)';
+      document.getElementById('log').textContent = 'Edit mode — click a key to inspect widget';
     } else {
       mode = 'live';
       btn.textContent = '🔍 Live';
       btn.classList.add('active');
+      hideInspector();
       document.getElementById('log').textContent = 'Live mode';
     }
   }
@@ -664,6 +787,256 @@
   }, 1500);
 
   document.getElementById('log').textContent = 'Ready — click a key or press 0-9';
+
+  // ── Modal helpers ──────────────────────────────
+
+  function closeModal(id) {
+    document.getElementById(id).style.display = 'none';
+  }
+
+  // Close modals on backdrop click
+  document.addEventListener('click', (e) => {
+    if (e.target.classList.contains('modal')) {
+      e.target.style.display = 'none';
+    }
+  });
+
+  // ── Key Inspector ──────────────────────────────
+
+  function showInspector(keyIdx, x, y) {
+    const insp = document.getElementById('keyInspector');
+    document.getElementById('inspKeyIdx').textContent = 'Key ' + keyIdx;
+    const body = document.getElementById('inspBody');
+
+    const lastKeys = window._lastKeys;
+    if (!lastKeys) {
+      body.innerHTML = '<p class="dim">No data</p>';
+    } else {
+      const k = lastKeys.find(k => k.index === keyIdx);
+      if (!k || !k.widget_id) {
+        body.innerHTML = '<p class="dim">Empty key</p>';
+      } else {
+        body.innerHTML =
+          '<div class="insp-label">Widget</div><div class="insp-val">' + esc(k.widget_id) + ' (' + esc(k.type) + ')</div>' +
+          '<div class="insp-label">Icon & Color</div><div class="insp-val"><span class="insp-swatch" style="background:' + esc(k.color) + '"></span>' + esc(k.icon || '(none)') + ' ' + esc(k.color) + '</div>' +
+          '<div class="insp-label">Animation</div><div class="insp-val">' + esc(k.animation) + '</div>' +
+          '<div class="insp-label">Label</div><div class="insp-val">' + esc(k.label || '(none)') + '</div>' +
+          (k.badge ? '<div class="insp-label">Badge</div><div class="insp-val">' + esc(k.badge) + '</div>' : '');
+      }
+    }
+
+    insp.style.display = '';
+    insp.style.left = Math.min(x + 10, window.innerWidth - 290) + 'px';
+    insp.style.top = Math.min(y + 10, window.innerHeight - 260) + 'px';
+  }
+
+  function hideInspector() {
+    document.getElementById('keyInspector').style.display = 'none';
+  }
+
+  function esc(s) { return (s || '').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+  // ── Visual Config Editor ────────────────────────
+
+  async function showVisualConfig() {
+    document.getElementById('visualModal').style.display = '';
+    const body = document.getElementById('visualBody');
+    body.innerHTML = '<p class="dim">Loading...</p>';
+    try {
+      const resp = await fetch('/api/appearance');
+      const data = await resp.json();
+      if (!data.events) throw new Error('no events');
+      const events = data.events;
+      body.innerHTML = Object.keys(events).sort().map(name => {
+        const e = events[name];
+        return '<div class="evt-row">' +
+          '<span class="evt-name">' + esc(name) + '</span>' +
+          '<input type="text" value="' + esc(e.icon) + '" data-ev="' + esc(name) + '" data-f="icon" maxlength="4">' +
+          '<input type="color" value="' + esc(e.color) + '" data-ev="' + esc(name) + '" data-f="color" title="Color">' +
+          '<select data-ev="' + esc(name) + '" data-f="animation">' +
+            ['none','pulse','crawl','blink','progress'].map(a =>
+              '<option' + (e.animation === a ? ' selected' : '') + '>' + a + '</option>').join('') +
+          '</select>' +
+          '<input type="text" value="' + esc(e.label) + '" data-ev="' + esc(name) + '" data-f="label" maxlength="12">' +
+        '</div>';
+      }).join('');
+    } catch (e) {
+      body.innerHTML = '<p class="dim">Failed to load appearance config</p>';
+    }
+  }
+
+  async function saveAppearance() {
+    const events = {};
+    document.querySelectorAll('#visualBody [data-ev]').forEach(el => {
+      const ev = el.dataset.ev;
+      if (!events[ev]) events[ev] = { icon: '', color: '#000000', animation: 'none', label: '' };
+      events[ev][el.dataset.f] = el.value;
+    });
+    try {
+      const resp = await fetch('/api/appearance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ events }),
+      });
+      if (resp.ok) {
+        closeModal('visualModal');
+        document.getElementById('log').textContent = '✅ Appearance saved — restart daemon to reload';
+      } else {
+        document.getElementById('log').textContent = '❌ Save failed';
+      }
+    } catch (e) {
+      document.getElementById('log').textContent = '❌ Connection error';
+    }
+  }
+
+  // ── Theme Editor ───────────────────────────────
+
+  const THEME_VARS = ['--bg','--panel','--surface','--border','--text','--text-dim','--accent','--danger','--warn','--info'];
+
+  async function showThemeEditor() {
+    document.getElementById('themeModal').style.display = '';
+    const body = document.getElementById('themeBody');
+    const rs = getComputedStyle(document.documentElement);
+    body.innerHTML = THEME_VARS.map(v => {
+      const val = rs.getPropertyValue(v).trim();
+      return '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:0.8rem">' +
+        '<span style="min-width:80px;color:var(--text)">' + esc(v) + '</span>' +
+        '<input type="color" value="' + esc(val) + '" data-var="' + esc(v) + '" style="width:32px;height:28px">' +
+        '<input type="text" value="' + esc(val) + '" data-txt="' + esc(v) + '" style="flex:1;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:3px 6px;border-radius:5px;font-size:0.78rem">' +
+      '</div>';
+    }).join('');
+    // Sync color ↔ text
+    body.querySelectorAll('input[type=color]').forEach(c => {
+      const txt = body.querySelector('input[data-txt="' + c.dataset.var + '"]');
+      c.oninput = () => { txt.value = c.value; };
+      txt.oninput = () => { c.value = txt.value; };
+    });
+  }
+
+  async function saveTheme() {
+    let css = ':root {\n';
+    document.querySelectorAll('#themeBody input[type=text]').forEach(txt => {
+      css += '  ' + txt.dataset.txt + ': ' + txt.value + ';\n';
+    });
+    css += '}';
+    try {
+      const resp = await fetch('/api/theme', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ css }),
+      });
+      if (resp.ok) {
+        // Apply immediately
+        document.querySelectorAll('#themeBody input[type=text]').forEach(txt => {
+          document.documentElement.style.setProperty(txt.dataset.txt, txt.value);
+        });
+        closeModal('themeModal');
+        document.getElementById('log').textContent = '✅ Theme saved & applied';
+      }
+    } catch (e) {
+      document.getElementById('log').textContent = '❌ Connection error';
+    }
+  }
+
+  // ── Layout Save / Load ─────────────────────────
+
+  function showSaveDialog() {
+    document.getElementById('saveModal').style.display = '';
+    document.getElementById('saveName').value = '';
+    document.getElementById('saveName').focus();
+  }
+
+  async function saveLayout() {
+    const name = document.getElementById('saveName').value.trim();
+    if (!name) return;
+    try {
+      const resp = await fetch('/api/layouts/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      if (resp.ok) {
+        closeModal('saveModal');
+        document.getElementById('log').textContent = '✅ Layout "' + name + '" saved';
+      } else {
+        document.getElementById('log').textContent = '❌ Save failed';
+      }
+    } catch (e) {
+      document.getElementById('log').textContent = '❌ Connection error';
+    }
+  }
+
+  async function showLoadDialog() {
+    document.getElementById('loadModal').style.display = '';
+    const list = document.getElementById('loadList');
+    list.innerHTML = '<p class="dim">Loading...</p>';
+    try {
+      const resp = await fetch('/api/layouts');
+      const data = await resp.json();
+      const layouts = data.layouts || [];
+      if (layouts.length === 0) {
+        list.innerHTML = '<p class="dim">No saved layouts</p>';
+      } else {
+        list.innerHTML = layouts.map(l =>
+          '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.04)">' +
+            '<span style="font-size:0.85rem">' + esc(l.name) + '</span>' +
+            '<button onclick="loadLayoutByName(\'' + esc(l.name) + '\')" style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:5px;padding:4px 10px;cursor:pointer;font-size:0.75rem">Load</button>' +
+          '</div>'
+        ).join('');
+      }
+    } catch (e) {
+      list.innerHTML = '<p class="dim">Failed to load layouts</p>';
+    }
+  }
+
+  async function loadLayoutByName(name) {
+    try {
+      const resp = await fetch('/api/layouts/load', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      if (resp.ok) {
+        closeModal('loadModal');
+        document.getElementById('log').textContent = '✅ Layout "' + name + '" loaded — refresh to see changes';
+      } else {
+        document.getElementById('log').textContent = '❌ Load failed';
+      }
+    } catch (e) {
+      document.getElementById('log').textContent = '❌ Connection error';
+    }
+  }
+
+  // ── Edit-mode key click → inspector ───────────
+
+  function pressKey(i) {
+    const token = getToken();
+    const log = document.getElementById('log');
+
+    if (mode === 'edit') {
+      // Open inspector instead of sending key press
+      const keyEl = document.querySelector('.key[data-index="' + i + '"]');
+      if (keyEl) {
+        const rect = keyEl.getBoundingClientRect();
+        showInspector(i, rect.right, rect.top);
+      }
+      return;
+    }
+
+    log.textContent = '🖱 Key ' + i + ' pressed';
+    log.style.color = 'var(--accent)';
+    setTimeout(() => { log.style.color = 'var(--text-dim)'; }, 600);
+    fetch('/api/key/' + i + '?token=' + token, { method: 'POST' }).catch(() => {});
+  }
+
+  // ── Close inspector on outside click ───────────
+
+  document.addEventListener('click', (e) => {
+    const insp = document.getElementById('keyInspector');
+    if (insp.style.display !== 'none' && !insp.contains(e.target) && !e.target.closest('.key')) {
+      hideInspector();
+    }
+  });
 </script>
 </body>
 </html>

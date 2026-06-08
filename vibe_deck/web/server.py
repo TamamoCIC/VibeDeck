@@ -72,6 +72,12 @@ class VibeDeckWebServer:
         self._app.router.add_get("/api/terminal/status", self._terminal_status)
         self._app.router.add_post("/api/terminal/register", self._terminal_register)
         self._app.router.add_get("/api/layouts", self._list_layouts)
+        self._app.router.add_post("/api/layouts/save", self._save_layout)
+        self._app.router.add_post("/api/layouts/load", self._load_layout)
+        self._app.router.add_get("/api/appearance", self._get_appearance)
+        self._app.router.add_post("/api/appearance", self._save_appearance)
+        self._app.router.add_get("/api/theme", self._get_theme)
+        self._app.router.add_post("/api/theme", self._save_theme)
         self._app.router.add_static("/static/", STATIC_DIR, show_index=False)
 
     @property
@@ -353,3 +359,119 @@ class VibeDeckWebServer:
             for f in sorted(LAYOUTS_DIR.glob("*.yaml")):
                 layouts.append({"name": f.stem, "path": str(f)})
         return web.json_response({"layouts": layouts})
+
+    async def _save_layout(self, request: web.Request) -> web.Response:
+        """Save the current layout frame to a YAML file."""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid JSON body"}, status=400)
+
+        name = body.get("name", "").strip()
+        terminal_id = body.get("terminal_id", "default")
+        if not name:
+            return web.json_response({"error": "name is required"}, status=400)
+
+        frame = self._engine.get_frame(terminal_id)
+        if frame is None:
+            return web.json_response({"error": f"terminal {terminal_id!r} not found"}, status=404)
+
+        from ..config import LAYOUTS_DIR
+        LAYOUTS_DIR.mkdir(parents=True, exist_ok=True)
+        safe_name = name.replace("/", "_").replace("\\", "_")
+        path = LAYOUTS_DIR / f"{safe_name}.yaml"
+        frame.to_yaml(str(path))
+        log.info("Layout saved: %s (terminal=%s, widgets=%d)", name, terminal_id, len(frame.widgets))
+        return web.json_response({"status": "ok", "path": str(path)})
+
+    async def _load_layout(self, request: web.Request) -> web.Response:
+        """Load a layout YAML file into a terminal's frame."""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid JSON body"}, status=400)
+
+        name = body.get("name", "").strip()
+        terminal_id = body.get("terminal_id", "default")
+        if not name:
+            return web.json_response({"error": "name is required"}, status=400)
+
+        from ..config import LAYOUTS_DIR
+        safe_name = name.replace("/", "_").replace("\\", "_")
+        path = LAYOUTS_DIR / f"{safe_name}.yaml"
+        if not path.exists():
+            return web.json_response({"error": f"layout {name!r} not found"}, status=404)
+
+        from ..core.layout import LayoutFrame
+        frame = LayoutFrame.from_yaml(str(path))
+        # Register frame for this terminal
+        self._engine._frames[terminal_id] = frame
+        log.info("Layout loaded: %s → terminal %s (widgets=%d)", name, terminal_id, len(frame.widgets))
+        return web.json_response({"status": "ok", "name": name})
+
+    async def _get_appearance(self, request: web.Request) -> web.Response:
+        """Return the current widget appearance config."""
+        from ..adapters.claude_code import STATUS_TO_DISPLAY
+        return web.json_response({"events": STATUS_TO_DISPLAY})
+
+    async def _save_appearance(self, request: web.Request) -> web.Response:
+        """Update the widget appearance config and persist to YAML."""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid JSON body"}, status=400)
+
+        events = body.get("events")
+        if not events or not isinstance(events, dict):
+            return web.json_response({"error": "events dict is required"}, status=400)
+
+        from ..adapters.claude_code import STATUS_TO_DISPLAY, _save_appearance_config
+        STATUS_TO_DISPLAY.clear()
+        STATUS_TO_DISPLAY.update(events)
+        _save_appearance_config(events)
+        log.info("Appearance config saved (%d entries)", len(events))
+        return web.json_response({"status": "ok"})
+
+    async def _get_theme(self, request: web.Request) -> web.Response:
+        """Return the current web UI theme as CSS variables."""
+        from ..config import TEMPLATES_DIR
+        theme_path = TEMPLATES_DIR.parent / "themes" / "default.css"
+        if theme_path.exists():
+            css = theme_path.read_text(encoding="utf-8")
+        else:
+            css = _DEFAULT_THEME_CSS
+        return web.json_response({"css": css})
+
+    async def _save_theme(self, request: web.Request) -> web.Response:
+        """Save a custom web UI theme."""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid JSON body"}, status=400)
+
+        css = body.get("css", "")
+        if not css:
+            return web.json_response({"error": "css is required"}, status=400)
+
+        from ..config import TEMPLATES_DIR
+        themes_dir = TEMPLATES_DIR.parent / "themes"
+        themes_dir.mkdir(parents=True, exist_ok=True)
+        theme_path = themes_dir / "default.css"
+        theme_path.write_text(css, encoding="utf-8")
+        log.info("Theme saved (%d chars)", len(css))
+        return web.json_response({"status": "ok"})
+
+
+# Default theme fallback (CSS custom properties)
+_DEFAULT_THEME_CSS = """:root {
+  --bg: #0f0f1a;
+  --panel: #1a1a2e;
+  --surface: #16213e;
+  --border: #2a2a4a;
+  --text: #e0e0e0;
+  --text-dim: #888;
+  --accent: #22c55e;
+  --danger: #ef4444;
+  --warn: #eab308;
+  --info: #3b82f6;
+}"""

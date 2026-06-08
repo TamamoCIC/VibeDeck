@@ -6,39 +6,28 @@ Two integration paths (both can coexist):
   2. Hook events      — Claude Code fires hooks → reporter.py writes JSONL
                          → FileWatcher picks up → MessageBus → display
 
-The adapter's STATUS_TO_DISPLAY covers every Claude Code hook event so
-that no matter which path produces the update, the display mapping works.
-
-Default display mapping:
-  SessionStart       → 🐙, green, crawl  ("Running")
-  Stop               → 🐙, dim green, none ("Idle")
-  UserPromptSubmit   → 🐙, yellow, blink ("Waiting")
-  PreToolUse         → 🐙, green, crawl  ("Tool: <name>")
-  PostToolUse        → 🐙, green, crawl  ("Running")
-  PreCompact         → 🐙, indigo, pulse ("Compacting")
-  SubagentStop       → 🐙, dim green, none ("Sub done")
-  SessionEnd         → ⚫, dark gray, none ("Offline")
-  running (process)  → 🐙, green, crawl  ("Running")
-  offline (process)  → ⚫, dark gray, none ("Offline")
-  error              → 🔴, red, blink    ("Error")
+The adapter's appearance config is loaded from
+~/.vibe-deck/adapters/claude-code.yaml (fallback to built-in defaults).
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 
 import psutil
+import yaml
 
 from ...core.types import DisplayState, WidgetState, WidgetType
 
 log = logging.getLogger("vibe_deck.adapters.claude_code")
 
-# Maps internal status keys (hook event names + process-based statuses)
-# to VibeDeck display primitives.  Consumers look up by either
-# `hook_event_name` or `status` field.
-STATUS_TO_DISPLAY: dict[str, dict[str, str]] = {
-    # ── Hook event → display ─────────────────────
+APPEARANCE_CONFIG_PATH = Path.home() / ".vibe-deck" / "adapters" / "claude-code.yaml"
+
+# ── Built-in fallback defaults ──────────────────────
+
+_BUILTIN_STATUS_TO_DISPLAY: dict[str, dict[str, str]] = {
     "SessionStart":     {"icon": "🐙", "color": "#22c55e", "animation": "crawl",  "label": "Running"},
     "Stop":             {"icon": "🐙", "color": "#166534", "animation": "none",   "label": "Idle"},
     "UserPromptSubmit": {"icon": "🐙", "color": "#eab308", "animation": "blink",  "label": "Waiting"},
@@ -47,13 +36,41 @@ STATUS_TO_DISPLAY: dict[str, dict[str, str]] = {
     "PreCompact":       {"icon": "🐙", "color": "#6366f1", "animation": "pulse",  "label": "Compact"},
     "SubagentStop":     {"icon": "🐙", "color": "#166534", "animation": "none",   "label": "Sub done"},
     "SessionEnd":       {"icon": "⚫", "color": "#374151", "animation": "none",   "label": "Offline"},
-    # ── Process-based status → display ───────────
     "running":          {"icon": "🐙", "color": "#22c55e", "animation": "crawl",  "label": "Running"},
     "idle":             {"icon": "🐙", "color": "#166534", "animation": "none",   "label": "Idle"},
     "waiting_for_user": {"icon": "🐙", "color": "#eab308", "animation": "blink",  "label": "Waiting"},
     "error":            {"icon": "🔴", "color": "#ef4444", "animation": "blink",  "label": "Error"},
     "offline":          {"icon": "⚫", "color": "#374151", "animation": "none",   "label": "Offline"},
 }
+
+
+def _load_appearance_config() -> dict[str, dict[str, str]]:
+    """Load appearance config from YAML, falling back to built-in defaults."""
+    try:
+        if APPEARANCE_CONFIG_PATH.exists():
+            raw = yaml.safe_load(APPEARANCE_CONFIG_PATH.read_text(encoding="utf-8"))
+            if raw and "events" in raw:
+                loaded = dict(raw["events"])
+                # Merge with built-in so missing keys are filled
+                merged = dict(_BUILTIN_STATUS_TO_DISPLAY)
+                merged.update(loaded)
+                return merged
+    except Exception:
+        log.warning("Failed to load appearance config, using built-in defaults",
+                    exc_info=True)
+    return dict(_BUILTIN_STATUS_TO_DISPLAY)
+
+
+def _save_appearance_config(events: dict[str, dict[str, str]]) -> None:
+    """Persist appearance config to YAML."""
+    APPEARANCE_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    data = {"events": events}
+    with open(APPEARANCE_CONFIG_PATH, "w", encoding="utf-8") as f:
+        yaml.safe_dump(data, f, default_flow_style=False, allow_unicode=True, indent=2)
+
+
+# Active config — loaded at import time, reloadable
+STATUS_TO_DISPLAY: dict[str, dict[str, str]] = _load_appearance_config()
 
 
 class ClaudeCodeAdapter:

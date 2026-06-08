@@ -356,6 +356,38 @@ class VibeDeckSupervisor:
                         if time.time() - existing._last_hook_ts < 5.0:
                             log.debug("[HOOK→UI] skipping heartbeat for %s (hook state is fresh)", widget_id)
                             continue
+
+                    import time
+                    now = time.time()
+
+                    # ── Waiting-state minimum display duration ──────────
+                    # UserPromptSubmit sets the widget to yellow/blink "Waiting",
+                    # but the first PreToolUse often arrives within ~50ms and
+                    # overwrites it.  Hold the Waiting display for at least
+                    # MIN_WAITING_DISPLAY_S seconds so the user can actually
+                    # see the state transition.
+                    MIN_WAITING_DISPLAY_S = 0.6
+
+                    if _hook_event == "UserPromptSubmit":
+                        existing._waiting_since = now
+
+                    if (_hook_event in ("PreToolUse", "PostToolUse")
+                            and hasattr(existing, '_waiting_since')
+                            and (now - existing._waiting_since) < MIN_WAITING_DISPLAY_S):
+                        # Defer this tool-event display so the Waiting state
+                        # persists for the remainder of the grace window.
+                        existing._pending_display = ds
+                        existing._pending_meta = data
+                        remaining = MIN_WAITING_DISPLAY_S - (now - existing._waiting_since)
+                        log.info("[HOOK→UI] deferring %s display for %.2fs (Waiting grace period)",
+                                 _hook_event, remaining)
+                        self._schedule_deferred_display(tid, widget_id, remaining)
+                        continue
+
+                    if _hook_event == "Stop":
+                        # Clear waiting state on explicit Stop
+                        if hasattr(existing, '_waiting_since'):
+                            del existing._waiting_since
                     existing.display = ds
                     existing.meta.update(data)
                     if _is_hook_event:
@@ -416,6 +448,38 @@ class VibeDeckSupervisor:
 
         # 3. Fallback
         return DisplayState(**fallback)
+
+    def _schedule_deferred_display(
+        self, terminal_id: str, widget_id: str, delay_s: float
+    ) -> None:
+        """Schedule a deferred display update after `delay_s` seconds.
+
+        Used to enforce a minimum display duration for transient states
+        (e.g. UserPromptSubmit → Waiting) that would otherwise be
+        overwritten by the next tool event before the user sees them.
+        """
+        import asyncio
+
+        async def _apply():
+            await asyncio.sleep(delay_s)
+            frame = self._engine.get_frame(terminal_id)
+            if frame is None:
+                return
+            existing = frame.widgets.get(widget_id)
+            if existing is None:
+                return
+            pending = getattr(existing, '_pending_display', None)
+            if pending is None:
+                return
+            existing.display = pending
+            pending_meta = getattr(existing, '_pending_meta', None) or {}
+            existing.meta.update(pending_meta)
+            del existing._pending_display
+            existing._pending_meta = {}
+            log.info("[HOOK→UI] deferred display applied for %s → label=%s",
+                     widget_id, pending.label)
+
+        self._tasks.append(asyncio.create_task(_apply()))
 
     async def _shutdown(self) -> None:
         """Gracefully shut down all components."""
