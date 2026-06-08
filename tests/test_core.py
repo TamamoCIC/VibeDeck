@@ -318,6 +318,119 @@ class TestLayoutEngine:
         f1 = engine.get_frame("t1")
         assert "w1" not in f1.widgets
 
+    # ── New: update_widget_across_terminals ────────
+
+    def test_update_widget_across_terminals_updates_existing_only(self):
+        """update_widget_across_terminals updates existing widgets, never creates."""
+        from vibe_deck.core.layout import LayoutEngine
+        from vibe_deck.core.types import DisplayState, WidgetState, WidgetType
+        engine = LayoutEngine()
+        engine.register_terminal("t1", 3, 5, "test1")
+        engine.register_terminal("t2", 4, 8, "test2")
+
+        # Place widget on t1 only
+        ws = WidgetState(id="agent-1", type=WidgetType.AGENT,
+                         display=DisplayState(icon="🐙", label="Running"))
+        engine.upsert_widget(ws, "t1")
+
+        # Now update across all terminals — should only touch t1
+        updated_ws = WidgetState(id="agent-1", type=WidgetType.AGENT,
+                                 display=DisplayState(icon="🦊", label="Idle"))
+        updated = engine.update_widget_across_terminals(updated_ws)
+
+        assert updated == ["t1"]  # only t1 had the widget
+        f1 = engine.get_frame("t1")
+        f2 = engine.get_frame("t2")
+        assert f1.widgets["agent-1"].display.icon == "🦊"
+        assert "agent-1" not in f2.widgets  # NOT auto-created on t2
+
+    def test_update_widget_across_terminals_no_existing(self):
+        """Returns empty list when widget doesn't exist on any terminal."""
+        from vibe_deck.core.layout import LayoutEngine
+        from vibe_deck.core.types import DisplayState, WidgetState
+        engine = LayoutEngine()
+        ws = WidgetState(id="ghost", display=DisplayState(icon="👻"))
+        updated = engine.update_widget_across_terminals(ws)
+        assert updated == []
+
+    # ── New: named layouts ────────────────────────
+
+    def test_save_and_list_layouts(self):
+        """save_layout_as creates a named layout, list_layouts returns it."""
+        from vibe_deck.core.layout import LayoutEngine
+        from vibe_deck.core.types import WidgetState, WidgetType
+        engine = LayoutEngine()
+        engine.register_terminal("t1", 3, 5, "test")
+        engine.update_widget(WidgetState(id="w1", type=WidgetType.AGENT), "t1")
+
+        result = engine.save_layout_as("my-layout", "t1", to_disk=False)
+        assert result is None  # to_disk=False means no path
+        layouts = engine.list_layouts("t1")
+        assert "my-layout" in layouts
+
+    def test_switch_layout(self):
+        """switch_layout changes the active frame and preserves the old one."""
+        from vibe_deck.core.layout import LayoutEngine
+        from vibe_deck.core.types import WidgetState, WidgetType
+        engine = LayoutEngine()
+        engine.register_terminal("t1", 3, 5, "test")
+
+        # Set up widget on active layout, then save it
+        engine.update_widget(WidgetState(id="w1", type=WidgetType.AGENT), "t1")
+        engine.save_layout_as("layout-a", "t1", to_disk=False)
+
+        # Clear widget from active, save as layout-b
+        engine.remove_widget("w1", "t1")
+        engine.save_layout_as("layout-b", "t1", to_disk=False)
+
+        # Switch back to layout-a — widget should reappear
+        frame = engine.switch_layout("t1", "layout-a")
+        assert frame is not None
+        assert "w1" in frame.widgets
+
+        # Switch to layout-b — widget should be gone
+        frame = engine.switch_layout("t1", "layout-b")
+        assert frame is not None
+        assert "w1" not in frame.widgets
+
+    def test_switch_layout_unknown(self):
+        """switch_layout returns None for unknown terminal or layout."""
+        from vibe_deck.core.layout import LayoutEngine
+        engine = LayoutEngine()
+        assert engine.switch_layout("ghost", "x") is None
+        assert engine.switch_layout("default", "nonexistent") is None
+
+    def test_load_layout_with_name(self):
+        """load_layout sets active and can store as named layout."""
+        import tempfile
+        from pathlib import Path
+        from vibe_deck.core.layout import LayoutEngine
+        from vibe_deck.core.types import DisplayState, LayoutFrame, WidgetState, WidgetType
+
+        engine = LayoutEngine()
+        engine.register_terminal("t1", 3, 5, "test")
+
+        frame = LayoutFrame.for_grid(3, 5, "test")
+        frame.place_widget(WidgetState(
+            id="w1", type=WidgetType.AGENT,
+            display=DisplayState(icon="🐙")), 0)
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            frame.to_yaml(f.name)
+
+        result = engine.load_layout(f.name, "t1", as_name="loaded")
+        assert result is not None
+        assert "w1" in result.widgets
+        assert "loaded" in engine.list_layouts("t1")
+
+        Path(f.name).unlink()
+
+    def test_save_layout_as_unknown_terminal(self):
+        """save_layout_as returns None for unknown terminal."""
+        from vibe_deck.core.layout import LayoutEngine
+        engine = LayoutEngine()
+        assert engine.save_layout_as("x", "ghost") is None
+
 
 class TestMessageBus:
     @pytest.mark.asyncio

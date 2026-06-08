@@ -352,16 +352,19 @@ class VibeDeckWebServer:
         }, status=201)
 
     async def _list_layouts(self, request: web.Request) -> web.Response:
-        """List available layout files."""
+        """List available layout files (excluding autosave internal files)."""
         from ..config import LAYOUTS_DIR
         layouts = []
         if LAYOUTS_DIR.exists():
             for f in sorted(LAYOUTS_DIR.glob("*.yaml")):
+                # Exclude autosave internal files
+                if f.name.startswith("_autosave-"):
+                    continue
                 layouts.append({"name": f.stem, "path": str(f)})
         return web.json_response({"layouts": layouts})
 
     async def _save_layout(self, request: web.Request) -> web.Response:
-        """Save the current layout frame to a YAML file."""
+        """Save the current active layout as a named layout."""
         try:
             body = await request.json()
         except Exception:
@@ -372,20 +375,17 @@ class VibeDeckWebServer:
         if not name:
             return web.json_response({"error": "name is required"}, status=400)
 
-        frame = self._engine.get_frame(terminal_id)
-        if frame is None:
+        result = self._engine.save_layout_as(name, terminal_id)
+        if result is None:
             return web.json_response({"error": f"terminal {terminal_id!r} not found"}, status=404)
 
-        from ..config import LAYOUTS_DIR
-        LAYOUTS_DIR.mkdir(parents=True, exist_ok=True)
-        safe_name = name.replace("/", "_").replace("\\", "_")
-        path = LAYOUTS_DIR / f"{safe_name}.yaml"
-        frame.to_yaml(str(path))
-        log.info("Layout saved: %s (terminal=%s, widgets=%d)", name, terminal_id, len(frame.widgets))
-        return web.json_response({"status": "ok", "path": str(path)})
+        frame = self._engine.get_frame(terminal_id)
+        log.info("Layout saved: %s (terminal=%s, widgets=%d)", name, terminal_id,
+                 len(frame.widgets) if frame else 0)
+        return web.json_response({"status": "ok", "path": str(result)})
 
     async def _load_layout(self, request: web.Request) -> web.Response:
-        """Load a layout YAML file into a terminal's frame."""
+        """Load a saved layout and set it as the active layout for a terminal."""
         try:
             body = await request.json()
         except Exception:
@@ -402,10 +402,10 @@ class VibeDeckWebServer:
         if not path.exists():
             return web.json_response({"error": f"layout {name!r} not found"}, status=404)
 
-        from ..core.layout import LayoutFrame
-        frame = LayoutFrame.from_yaml(str(path))
-        # Register frame for this terminal
-        self._engine._frames[terminal_id] = frame
+        frame = self._engine.load_layout(str(path), terminal_id, as_name=name)
+        if frame is None:
+            return web.json_response({"error": f"terminal {terminal_id!r} not found"}, status=404)
+
         log.info("Layout loaded: %s → terminal %s (widgets=%d)", name, terminal_id, len(frame.widgets))
         return web.json_response({"status": "ok", "name": name})
 

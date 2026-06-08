@@ -297,10 +297,10 @@
 </div>
 
 <div class="toolbar">
-  <select id="deckType" onchange="changeDeck()">
-    <option value="2x3">2×3 (Mini)</option>
-    <option value="3x5">3×5 (Standard)</option>
-    <option value="4x8" selected>4×8 (XL)</option>
+  <select id="deckType" onchange="changeDeck()" title="Switch terminal grid / active layout">
+    <option value="2x3">2×3 Layout</option>
+    <option value="3x5">3×5 Layout</option>
+    <option value="4x8" selected>4×8 Layout</option>
   </select>
   <button id="btnMode" onclick="toggleMode()" class="active">🔍 Live</button>
   <button onclick="showVisualConfig()" title="Widget appearance editor">🎨 Visual</button>
@@ -577,15 +577,6 @@
     ).join('');
   }
 
-  function pressKey(i) {
-    const log = document.getElementById('log');
-    log.textContent = `🖱️ Key ${i} pressed`;
-    log.style.color = 'var(--accent)';
-    setTimeout(() => { log.style.color = 'var(--text-dim)'; }, 600);
-
-    fetch(`/api/key/${i}`, { method: 'POST' }).catch(() => {});
-  }
-
   function changeDeck() {
     currentDeck = document.getElementById('deckType').value;
     buildGrid(currentDeck);
@@ -620,54 +611,6 @@
     document.getElementById('log').textContent = '🔄 Deck reset';
   }
 
-  // ── SSE Connection ────────────────────────────
-
-  function connectSSE() {
-    const statusDot = document.getElementById('statusDot');
-    const statusLabel = document.getElementById('statusLabel');
-
-    const es = new EventSource('/api/events');
-    let connected = false;
-
-    es.onopen = () => {
-      connected = true;
-      sseRetryDelay = 1000;
-      statusDot.className = 'status-dot online';
-      statusLabel.textContent = 'Live';
-
-      // If no frames for 3s, use demo data
-      setTimeout(() => {
-        if (!window._lastKeys) {
-          statusLabel.textContent = 'Demo (no daemon frames)';
-          updateKeys(DEMO_KEY_DATA);
-        }
-      }, 3000);
-    };
-
-    es.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'frame') {
-          window._lastKeys = data.keys;
-          updateKeys(data.keys);
-          statusDot.className = 'status-dot online';
-          statusLabel.textContent = `Live · ${data.display_name || data.deck_type}`;
-        }
-      } catch(e) {}
-    };
-
-    es.onerror = () => {
-      if (connected) {
-        statusDot.className = 'status-dot offline';
-        statusLabel.textContent = 'Disconnected';
-        connected = false;
-      }
-      es.close();
-      setTimeout(connectSSE, Math.min(sseRetryDelay, 30000));
-      sseRetryDelay *= 2;
-    };
-  }
-
   // ── Keyboard shortcuts ────────────────────────
 
   document.addEventListener('keydown', (e) => {
@@ -691,7 +634,6 @@
 
   function saveToken(t) {
     localStorage.setItem('vibedeck_token', t);
-    // Update URL without reload
     const url = new URL(window.location);
     url.searchParams.set('token', t);
     window.history.replaceState({}, '', url);
@@ -755,30 +697,26 @@
   async function init() {
     const token = getToken();
     if (!token) {
-      // No token — show wizard
       document.getElementById('wizard-view').style.display = '';
       document.getElementById('log').textContent = 'Ready — click a key or press 0-9';
       return;
     }
 
-    // Check if token is registered
     try {
       const resp = await fetch('/api/terminal/status?token=' + token);
       if (resp.ok) {
         const data = await resp.json();
         showApp(data.terminal.grid, data.terminal.name);
       } else {
-        // Token not registered — show wizard
         document.getElementById('wizard-view').style.display = '';
         document.getElementById('wizardName').placeholder = 'My Terminal';
       }
     } catch (e) {
-      // Daemon not running — show wizard anyway
       document.getElementById('wizard-view').style.display = '';
     }
   }
 
-  // ── Updated SSE with token ─────────────────────
+  // ── SSE Connection (token-authenticated) ──────
 
   function connectSSE() {
     const statusDot = document.getElementById('statusDot');
@@ -826,13 +764,24 @@
     };
   }
 
+  // ── Key press (token-authenticated) ───────────
+
   function pressKey(i) {
     const token = getToken();
     const log = document.getElementById('log');
+
+    if (mode === 'edit') {
+      const keyEl = document.querySelector('.key[data-index="' + i + '"]');
+      if (keyEl) {
+        const rect = keyEl.getBoundingClientRect();
+        showInspector(i, rect.right, rect.top);
+      }
+      return;
+    }
+
     log.textContent = '🖱 Key ' + i + ' pressed';
     log.style.color = 'var(--accent)';
     setTimeout(() => { log.style.color = 'var(--text-dim)'; }, 600);
-
     fetch('/api/key/' + i + '?token=' + token, { method: 'POST' }).catch(() => {});
   }
 
@@ -1019,11 +968,12 @@
   async function saveLayout() {
     const name = document.getElementById('saveName').value.trim();
     if (!name) return;
+    const token = getToken();
     try {
       const resp = await fetch('/api/layouts/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, terminal_id: 'default' }),
       });
       if (resp.ok) {
         closeModal('saveModal');
@@ -1064,7 +1014,7 @@
       const resp = await fetch('/api/layouts/load', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, terminal_id: 'default' }),
       });
       if (resp.ok) {
         closeModal('loadModal');
@@ -1075,28 +1025,6 @@
     } catch (e) {
       document.getElementById('log').textContent = '❌ Connection error';
     }
-  }
-
-  // ── Edit-mode key click → inspector ───────────
-
-  function pressKey(i) {
-    const token = getToken();
-    const log = document.getElementById('log');
-
-    if (mode === 'edit') {
-      // Open inspector instead of sending key press
-      const keyEl = document.querySelector('.key[data-index="' + i + '"]');
-      if (keyEl) {
-        const rect = keyEl.getBoundingClientRect();
-        showInspector(i, rect.right, rect.top);
-      }
-      return;
-    }
-
-    log.textContent = '🖱 Key ' + i + ' pressed';
-    log.style.color = 'var(--accent)';
-    setTimeout(() => { log.style.color = 'var(--text-dim)'; }, 600);
-    fetch('/api/key/' + i + '?token=' + token, { method: 'POST' }).catch(() => {});
   }
 
   // ── Close inspector on outside click ───────────

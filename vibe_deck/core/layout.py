@@ -1,20 +1,40 @@
 """
 VibeDeck Layout Engine — owns layout state and recomputes LayoutFrames.
 
-Consumes Widget state updates from the MessageBus, maintains one
-LayoutFrame per connected Terminal, and publishes frame updates
-when Widget states change.
+Architecture
+------------
+The engine models two distinct concepts:
+
+  Terminal  — a physical or virtual device with a fixed grid (rows×cols).
+              Each Terminal can hold multiple named Layouts, exactly one
+              of which is *active* at any time.
+
+  Layout    — a named arrangement of Widgets on a Terminal's grid.
+              Layouts are persisted as YAML files.  The active layout
+              is what gets pushed to the render target (Stream Deck,
+              phone simulator, etc.).
+
+This replaces the pre-refactor model where "Terminal" and "LayoutFrame"
+were 1:1 — a terminal WAS its only frame, and widget updates were
+broadcast to every terminal (causing state duplication).
+
+Consumes Widget state updates from the MessageBus, maintains
+LayoutFrames per Terminal, and publishes frame updates when Widget
+states change.
 """
 
 from __future__ import annotations
 
 import logging
+from pathlib import Path
+from typing import Optional
 
 from .types import DisplayState, LayoutFrame, WidgetState
 
 log = logging.getLogger("vibe_deck.core.layout")
 
 DEFAULT_TERMINAL = "default"
+ACTIVE_LAYOUT = "_active"   # key for the currently-active frame (not user-facing)
 AUTOSAVE_PREFIX = "_autosave"
 
 # Offline display state used when restoring agent widgets from autosave
@@ -23,18 +43,31 @@ _OFFLINE_DISPLAY = {"icon": "⚫", "color": "#374151", "animation": "none", "lab
 
 class LayoutEngine:
     """
-    Manages per-terminal layouts and produces LayoutFrames.
+    Manages Terminals, each with multiple named Layouts.
 
-    Each connected Terminal (physical or virtual) gets its own
-    LayoutFrame, registered via register_terminal(). The engine
-    routes Widget updates to the correct frame based on terminal_id.
+    Data model::
 
-    For backward compatibility, callers that don't specify a
-    terminal_id target the "default" terminal.
+        _terminals = {
+            "default": {
+                "Daily Driver": LayoutFrame(4×8, widgets={...}),
+                "Minimal":     LayoutFrame(4×8, widgets={...}),
+                "_active":     LayoutFrame(4×8, ...),   # currently active
+            },
+            "phone-01": { ... },
+        }
+
+    The "_active" key always points to the currently-displayed frame.
+    ``.frame`` and ``.get_frame()`` return the active frame.
+
+    Widget updates are routed to a specific terminal.  An auxiliary
+    method ``update_widget_across_terminals`` updates the widget on
+    every terminal that *already* has it — but never auto-creates,
+    avoiding the duplication that the broadcast patches caused.
     """
 
     def __init__(self, display_name: str = "4x8", rows: int = 4, cols: int = 8) -> None:
-        self._frames: dict[str, LayoutFrame] = {}
+        # terminal_id → {layout_name → LayoutFrame}
+        self._terminals: dict[str, dict[str, LayoutFrame]] = {}
         self._layout_name: str | None = None
         # Auto-register the default terminal
         self.register_terminal(DEFAULT_TERMINAL, rows, cols, display_name)
@@ -43,36 +76,47 @@ class LayoutEngine:
 
     @property
     def frame(self) -> LayoutFrame:
-        """The default terminal's frame (backward compat)."""
-        return self._frames[DEFAULT_TERMINAL]
+        """The default terminal's active frame (backward compat)."""
+        return self._terminals[DEFAULT_TERMINAL][ACTIVE_LAYOUT]
 
     @property
     def layout_name(self) -> str | None:
         return self._layout_name
+
+    # ── Internal helpers ──────────────────────────
+
+    def _active_frame(self, terminal_id: str) -> LayoutFrame:
+        """Return the active frame for *terminal_id* (KeyError if unknown)."""
+        return self._terminals[terminal_id][ACTIVE_LAYOUT]
+
+    def _set_active(self, terminal_id: str, frame: LayoutFrame) -> None:
+        """Replace the active frame for *terminal_id*."""
+        self._terminals[terminal_id][ACTIVE_LAYOUT] = frame
 
     # ── Terminal management ───────────────────────
 
     def register_terminal(
         self, terminal_id: str, rows: int, cols: int, display_name: str | None = None
     ) -> LayoutFrame:
-        """Create a new LayoutFrame for a Terminal.
+        """Register a Terminal and return its active LayoutFrame.
 
-        If the terminal already exists, returns the existing frame
-        (does not overwrite).
+        If the terminal already exists the existing active frame is
+        returned (the call is idempotent — dimensions are NOT changed).
 
-        On first registration, tries to restore state from the autosave
-        file (~/.vibe-deck/layouts/_autosave-<terminal_id>.yaml). Agent
-        widgets restored from autosave are reset to offline to avoid
-        showing stale status.
+        On first registration the engine tries to restore state from
+        the autosave file ``~/.vibe-deck/layouts/_autosave-<id>.yaml``.
+        Agent widgets restored this way are reset to *offline* to avoid
+        showing stale Running/Thinking states.
         """
-        if terminal_id in self._frames:
+        if terminal_id in self._terminals:
             log.debug("Terminal %r already registered, reusing", terminal_id)
-            return self._frames[terminal_id]
+            return self._active_frame(terminal_id)
 
         from ..config import LAYOUTS_DIR
 
         # Try to restore from autosave
         autosave_path = LAYOUTS_DIR / f"{AUTOSAVE_PREFIX}-{terminal_id}.yaml"
+        frame = None
         if autosave_path.exists():
             try:
                 frame = LayoutFrame.from_yaml(str(autosave_path))
@@ -80,50 +124,132 @@ class LayoutEngine:
                 for ws in frame.widgets.values():
                     if ws.type.value == "agent":
                         ws.display = DisplayState(**_OFFLINE_DISPLAY)
-                self._frames[terminal_id] = frame
                 log.info("Terminal %r restored from autosave (%d widgets, %s)",
                          terminal_id, len(frame.widgets), autosave_path.name)
-                return frame
             except Exception:
                 log.warning("Failed to load autosave for %r, starting fresh", terminal_id,
                             exc_info=True)
 
-        frame = LayoutFrame.for_grid(rows, cols, display_name or f"{rows}x{cols}")
-        self._frames[terminal_id] = frame
+        if frame is None:
+            frame = LayoutFrame.for_grid(rows, cols, display_name or f"{rows}x{cols}")
+
+        # Initialize terminal with one active layout
+        self._terminals[terminal_id] = {ACTIVE_LAYOUT: frame}
         log.info("Terminal %r registered (%dx%d)", terminal_id, rows, cols)
         return frame
 
     def unregister_terminal(self, terminal_id: str) -> None:
-        """Remove a Terminal and its LayoutFrame."""
+        """Remove a Terminal and all its Layouts."""
         if terminal_id == DEFAULT_TERMINAL:
             log.warning("Cannot unregister the default terminal; clearing instead")
-            self._frames[DEFAULT_TERMINAL] = LayoutFrame.for_grid(4, 8, "4x8")
+            self._terminals[DEFAULT_TERMINAL] = {ACTIVE_LAYOUT: LayoutFrame.for_grid(4, 8, "4x8")}
             return
-        self._frames.pop(terminal_id, None)
+        self._terminals.pop(terminal_id, None)
         log.info("Terminal %r unregistered", terminal_id)
 
     def get_frame(self, terminal_id: str) -> LayoutFrame | None:
-        """Get the LayoutFrame for a specific terminal, or None."""
-        return self._frames.get(terminal_id)
+        """Return the active LayoutFrame for *terminal_id*, or None."""
+        t = self._terminals.get(terminal_id)
+        return t[ACTIVE_LAYOUT] if t else None
 
     def list_terminals(self) -> list[str]:
         """Return all registered terminal IDs."""
-        return list(self._frames.keys())
+        return list(self._terminals.keys())
+
+    # ── Layout management ─────────────────────────
+
+    def list_layouts(self, terminal_id: str = DEFAULT_TERMINAL) -> list[str]:
+        """Return the names of saved (named) layouts for a terminal.
+
+        Excludes the internal ``_active`` key."""
+        t = self._terminals.get(terminal_id)
+        if t is None:
+            return []
+        return sorted(k for k in t if k != ACTIVE_LAYOUT)
+
+    def switch_layout(self, terminal_id: str, layout_name: str) -> LayoutFrame | None:
+        """Switch the active layout for *terminal_id* to *layout_name*.
+
+        The currently-active frame is auto-saved to ``_autosave-<id>.yaml``
+        before the switch so no state is lost.  Returns the new active
+        frame, or None if the terminal or layout doesn't exist.
+        """
+        t = self._terminals.get(terminal_id)
+        if t is None:
+            log.warning("switch_layout: unknown terminal %r", terminal_id)
+            return None
+        if layout_name not in t:
+            log.warning("switch_layout: layout %r not found on terminal %r", layout_name, terminal_id)
+            return None
+
+        # Autosave current frame before switching
+        self._autosave_terminal(terminal_id)
+
+        t[ACTIVE_LAYOUT] = t[layout_name]
+        log.info("Terminal %r switched to layout %r", terminal_id, layout_name)
+        return t[ACTIVE_LAYOUT]
+
+    def save_layout_as(
+        self, name: str, terminal_id: str = DEFAULT_TERMINAL, *, to_disk: bool = True
+    ) -> Path | None:
+        """Snapshot the active frame as a named layout.
+
+        The layout is stored in-memory and, when *to_disk* is True,
+        persisted to ``~/.vibe-deck/layouts/<name>.yaml``.
+
+        Returns the disk path, or None if the terminal is unknown.
+        """
+        t = self._terminals.get(terminal_id)
+        if t is None:
+            log.warning("save_layout_as: unknown terminal %r", terminal_id)
+            return None
+
+        # Snapshot the active frame (shallow copy via model_copy)
+        frame = t[ACTIVE_LAYOUT].model_copy(deep=True)
+        t[name] = frame
+        self._layout_name = name
+
+        if to_disk:
+            from ..config import LAYOUTS_DIR
+            LAYOUTS_DIR.mkdir(parents=True, exist_ok=True)
+            safe = name.replace("/", "_").replace("\\", "_")
+            path = LAYOUTS_DIR / f"{safe}.yaml"
+            frame.to_yaml(str(path))
+            log.info("Layout %r saved for terminal %r → %s", name, terminal_id, path)
+            return path
+        return None
+
+    def load_layout(
+        self, path: str, terminal_id: str = DEFAULT_TERMINAL, *, as_name: str | None = None
+    ) -> LayoutFrame | None:
+        """Load a YAML layout file and set it as the active frame.
+
+        If *as_name* is given the layout is also stored as a named
+        layout under that key.
+        """
+        frame = LayoutFrame.from_yaml(path)
+        if terminal_id not in self._terminals:
+            self._terminals[terminal_id] = {}
+        self._set_active(terminal_id, frame)
+        if as_name:
+            self._terminals[terminal_id][as_name] = frame
+        self._layout_name = path
+        return frame
 
     # ── Widget operations ─────────────────────────
 
     def update_widget(
         self, widget: WidgetState, terminal_id: str = DEFAULT_TERMINAL
     ) -> LayoutFrame | None:
-        """Update or add a Widget in the specified terminal's frame.
+        """Update or add a Widget in the specified terminal's active frame.
 
         Returns the updated frame, or None if the terminal is unknown.
         """
-        frame = self._frames.get(terminal_id)
-        if frame is None:
+        t = self._terminals.get(terminal_id)
+        if t is None:
             log.warning("update_widget: unknown terminal %r", terminal_id)
             return None
-
+        frame = t[ACTIVE_LAYOUT]
         existing = frame.widgets.get(widget.id)
         if existing:
             existing.display = widget.display
@@ -139,16 +265,17 @@ class LayoutEngine:
     ) -> LayoutFrame | None:
         """Update or add a Widget, auto-placing new widgets on the first empty key.
 
-        If the widget already exists in the frame, only its display/meta
-        are updated (existing key position is preserved).  If it is new,
-        the widget is placed on the first empty slot in the keymap.
+        If the widget already exists in the active frame only its
+        display/meta are updated (existing key position preserved).
+        New widgets are placed on the first empty keymap slot.
 
         Returns the updated frame, or None if the terminal is unknown.
         """
-        frame = self._frames.get(terminal_id)
-        if frame is None:
+        t = self._terminals.get(terminal_id)
+        if t is None:
             log.warning("upsert_widget: unknown terminal %r", terminal_id)
             return None
+        frame = t[ACTIVE_LAYOUT]
 
         existing = frame.widgets.get(widget.id)
         if existing is not None:
@@ -169,50 +296,79 @@ class LayoutEngine:
             frame.widgets[widget.id] = widget
             log.warning("Widget %r has no empty key slot on terminal %r (%d keys full)",
                         widget.id, terminal_id, len(frame.keymap))
-
         return frame
+
+    def update_widget_across_terminals(self, widget: WidgetState) -> list[str]:
+        """Update *widget* on every terminal that already has it.
+
+        This is a targeted broadcast — it only touches terminals where
+        the widget already exists in the active frame.  It **never**
+        auto-creates the widget on terminals that don't have it (unlike
+        the pre-refactor broadcast patch).
+
+        Returns the list of terminal IDs that were updated.
+        """
+        updated: list[str] = []
+        for tid, layouts in self._terminals.items():
+            frame = layouts.get(ACTIVE_LAYOUT)
+            if frame is None:
+                continue
+            existing = frame.widgets.get(widget.id)
+            if existing is not None:
+                existing.display = widget.display
+                existing.meta.update(widget.meta)
+                if existing.type != widget.type:
+                    existing.type = widget.type
+                updated.append(tid)
+        return updated
 
     def remove_widget(self, widget_id: str, terminal_id: str = DEFAULT_TERMINAL) -> None:
-        """Remove a Widget from a terminal's frame."""
-        frame = self._frames.get(terminal_id)
-        if frame is None:
+        """Remove a Widget from a terminal's active frame."""
+        t = self._terminals.get(terminal_id)
+        if t is None:
             return
-        frame.remove_widget(widget_id)
+        t[ACTIVE_LAYOUT].remove_widget(widget_id)
 
-    # ── Layout persistence ────────────────────────
-
-    def load_layout(self, path: str, terminal_id: str = DEFAULT_TERMINAL) -> LayoutFrame | None:
-        """Load a YAML layout file into a terminal's frame."""
-        frame = LayoutFrame.from_yaml(path)
-        self._frames[terminal_id] = frame
-        self._layout_name = path
-        return frame
+    # ── Persistence ───────────────────────────────
 
     def save_layout(self, path: str, terminal_id: str = DEFAULT_TERMINAL) -> None:
-        """Write a terminal's current frame to a YAML layout file."""
-        frame = self._frames.get(terminal_id)
-        if frame is None:
+        """Write a terminal's active frame to a YAML layout file (legacy).
+
+        Prefer :meth:`save_layout_as` for new code — it manages both
+        the in-memory copy and the disk write in one call.
+        """
+        t = self._terminals.get(terminal_id)
+        if t is None:
             raise ValueError(f"Unknown terminal: {terminal_id!r}")
-        frame.to_yaml(path)
+        t[ACTIVE_LAYOUT].to_yaml(path)
         self._layout_name = path
 
     def autosave_all(self) -> None:
-        """Persist all terminal frames to autosave files.
+        """Persist every terminal's active frame to an autosave file.
 
-        Each frame is written to:
+        Each frame is written to::
+
             ~/.vibe-deck/layouts/_autosave-<terminal_id>.yaml
 
-        The _autosave- prefix distinguishes auto-saved state from
-        user-managed layout files.  These files are written on daemon
-        shutdown and after every widget state update so that the
-        current layout survives crashes and restarts.
+        The ``_autosave-`` prefix keeps auto-saved state separate from
+        user-managed layout files.  Called on daemon shutdown and after
+        every widget state update so the layout survives crashes.
         """
         from ..config import LAYOUTS_DIR
 
         LAYOUTS_DIR.mkdir(parents=True, exist_ok=True)
-        for terminal_id, frame in self._frames.items():
-            path = LAYOUTS_DIR / f"{AUTOSAVE_PREFIX}-{terminal_id}.yaml"
-            try:
-                frame.to_yaml(str(path))
-            except Exception:
-                log.exception("Failed to autosave terminal %r", terminal_id)
+        for terminal_id, layouts in self._terminals.items():
+            self._autosave_terminal(terminal_id)
+
+    def _autosave_terminal(self, terminal_id: str) -> None:
+        """Write one terminal's active frame to its autosave file."""
+        from ..config import LAYOUTS_DIR
+
+        t = self._terminals.get(terminal_id)
+        if t is None:
+            return
+        path = LAYOUTS_DIR / f"{AUTOSAVE_PREFIX}-{terminal_id}.yaml"
+        try:
+            t[ACTIVE_LAYOUT].to_yaml(str(path))
+        except Exception:
+            log.exception("Failed to autosave terminal %r", terminal_id)

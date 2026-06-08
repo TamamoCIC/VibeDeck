@@ -342,10 +342,6 @@ class VibeDeckSupervisor:
                 ds = self._resolve_display(agent_name, data, DISPLAY_MAP)
 
             # Don't let adapter heartbeats overwrite hook-driven fine-grained status.
-            # Adapter heartbeat publishes status="running" every 3s; hook events
-            # communicate the real state (Waiting, Idle, tool names).  Once a hook
-            # event has set the state, ignore heartbeats until a "Stop" hook event
-            # or an explicit offline status clears the hook-driven state.
             _is_hook_event = bool(_hook_event)
             _is_adapter_heartbeat = bool(not _hook_event and _status in ("running", "idle"))
 
@@ -361,73 +357,70 @@ class VibeDeckSupervisor:
             log.info("[HOOK→UI] display resolved → icon=%s color=%s anim=%s label=%s",
                      ds.icon, ds.color, ds.animation, ds.label)
 
-            # Update widget on ALL registered terminals so every connected
-            # device/phone sees the same state, regardless of which terminal
-            # the user is viewing.
+            # ── Targeted widget update ──────────────────────────
+            # Pre-refactor: looped over ALL terminals and auto-created
+            # widgets everywhere, duplicating state on every device.
+            # Now we UPDATE existing widgets in-place on terminals
+            # that already have them, and CREATE only on the single
+            # terminal the event was routed to.
+            import time as _time
+
+            updated_tids: list[str] = []
             for tid in self._engine.list_terminals():
                 frame = self._engine.get_frame(tid)
                 if frame is None:
                     continue
                 existing = frame.widgets.get(widget_id)
-                if existing:
-                    # Skip adapter heartbeat when hook events have set the state.
-                    # Hook events (UserPromptSubmit, PreToolUse, PostToolUse, Stop)
-                    # carry authoritative state; the adapter's periodic "running"
-                    # heartbeat should never overwrite them.  Only allow heartbeats
-                    # when no hook event has been received yet (startup) or after a
-                    # Stop confirms the session is idle.
-                    if _is_adapter_heartbeat and hasattr(existing, '_last_hook_ts'):
-                        import time
-                        # Keep suppressing indefinitely — hook events are authoritative
-                        log.debug("[HOOK→UI] skipping heartbeat for %s (hook events are authoritative)", widget_id)
-                        continue
+                if existing is None:
+                    continue  # don't auto-create — only update existing
 
-                    import time
-                    now = time.time()
+                # Skip adapter heartbeat when hook events have set the state.
+                if _is_adapter_heartbeat and hasattr(existing, '_last_hook_ts'):
+                    log.debug("[HOOK→UI] skipping heartbeat for %s (hook events are authoritative)", widget_id)
+                    continue
 
-                    # ── Waiting-state minimum display duration ──────────
-                    # UserPromptSubmit sets the widget to yellow/blink "Waiting",
-                    # but the first PreToolUse often arrives within ~50ms and
-                    # overwrites it.  Hold the Waiting display for at least
-                    # MIN_WAITING_DISPLAY_S seconds so the user can actually
-                    # see the state transition.
-                    MIN_WAITING_DISPLAY_S = 0.6
+                now = _time.time()
 
-                    if _hook_event == "UserPromptSubmit":
-                        existing._waiting_since = now
+                # ── Waiting-state minimum display duration ──────────
+                MIN_WAITING_DISPLAY_S = 0.6
 
-                    if (_hook_event in ("PreToolUse", "PostToolUse")
-                            and hasattr(existing, '_waiting_since')
-                            and (now - existing._waiting_since) < MIN_WAITING_DISPLAY_S):
-                        # Defer this tool-event display so the Waiting state
-                        # persists for the remainder of the grace window.
-                        existing._pending_display = ds
-                        existing._pending_meta = data
-                        remaining = MIN_WAITING_DISPLAY_S - (now - existing._waiting_since)
-                        log.info("[HOOK→UI] deferring %s display for %.2fs (Waiting grace period)",
-                                 _hook_event, remaining)
-                        self._schedule_deferred_display(tid, widget_id, remaining)
-                        continue
+                if _hook_event == "UserPromptSubmit":
+                    existing._waiting_since = now
 
-                    if _hook_event == "Stop":
-                        # Clear waiting state on explicit Stop
-                        if hasattr(existing, '_waiting_since'):
-                            del existing._waiting_since
-                    existing.display = ds
-                    existing.meta.update(data)
-                    if _is_hook_event:
-                        import time
-                        existing._last_hook_ts = time.time()
-                    log.debug("[HOOK→UI] widget %s UPDATED on terminal %s", widget_id, tid)
-                else:
+                if (_hook_event in ("PreToolUse", "PostToolUse")
+                        and hasattr(existing, '_waiting_since')
+                        and (now - existing._waiting_since) < MIN_WAITING_DISPLAY_S):
+                    existing._pending_display = ds
+                    existing._pending_meta = data
+                    remaining = MIN_WAITING_DISPLAY_S - (now - existing._waiting_since)
+                    log.info("[HOOK→UI] deferring %s display for %.2fs (Waiting grace period)",
+                             _hook_event, remaining)
+                    self._schedule_deferred_display(tid, widget_id, remaining)
+                    updated_tids.append(tid)
+                    continue
+
+                if _hook_event == "Stop":
+                    if hasattr(existing, '_waiting_since'):
+                        del existing._waiting_since
+                existing.display = ds
+                existing.meta.update(data)
+                if _is_hook_event:
+                    existing._last_hook_ts = _time.time()
+                updated_tids.append(tid)
+                log.debug("[HOOK→UI] widget %s UPDATED on terminal %s", widget_id, tid)
+
+            # Auto-create the widget on the terminal the event targets
+            # (only if it didn't already exist there)
+            if terminal_id not in updated_tids:
+                frame = self._engine.get_frame(terminal_id)
+                if frame is not None and widget_id not in frame.widgets:
                     if "badge" in data:
                         ds.badge = str(data["badge"])
                     ws = WidgetState(id=widget_id, type=WidgetType.AGENT, display=ds, meta=data)
                     if _is_hook_event:
-                        import time
-                        ws._last_hook_ts = time.time()
-                    self._engine.upsert_widget(ws, tid)
-                    log.info("[HOOK→UI] new widget %s CREATED on terminal %s", widget_id, tid)
+                        ws._last_hook_ts = _time.time()
+                    self._engine.upsert_widget(ws, terminal_id)
+                    log.info("[HOOK→UI] new widget %s CREATED on terminal %s", widget_id, terminal_id)
 
         elif msg.type == MessageType.KEY_PRESSED:
             key = msg.payload.get("key", -1)
@@ -548,11 +541,14 @@ class VibeDeckSupervisor:
                 from .types import DisplayState
                 from ..adapters.claude_code import STATUS_TO_DISPLAY
                 thinking_cfg = STATUS_TO_DISPLAY.get("thinking", {"icon": "🐙", "color": "#7c3aed", "animation": "pulse", "label": "Thinking"})
-                # Update ALL terminals — hook events route to every device
+                # Update all terminals that have agent widgets — targeted,
+                # does NOT auto-create widgets on terminals that don't
+                # already have them.
                 for tid in self._engine.list_terminals():
                     frame = self._engine.get_frame(tid)
                     if frame is None:
                         continue
+                    pushed = False
                     for widget_id, ws in list(frame.widgets.items()):
                         current_label = ws.display.label
                         current_anim = ws.display.animation.value if hasattr(ws.display.animation, 'value') else str(ws.display.animation)
@@ -562,11 +558,12 @@ class VibeDeckSupervisor:
                             continue
                         ds = DisplayState(**thinking_cfg)
                         ws.display = ds
+                        pushed = True
                         log.info("[THINKING] widget %s → Thinking (%.1fs silence on terminal %s)",
                                  widget_id, self.THINKING_TIMEOUT_S, tid)
-                        # Force immediate frame push
-                        if hasattr(self, '_web_server'):
-                            await self._web_server.broadcast_frame(tid, frame)
+                    # Force immediate frame push for terminals that changed
+                    if pushed and hasattr(self, '_web_server'):
+                        await self._web_server.broadcast_frame(tid, frame)
 
             self._thinking_timer = asyncio.create_task(_fire_thinking())
 
