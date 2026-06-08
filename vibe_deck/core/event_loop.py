@@ -524,6 +524,7 @@ class VibeDeckSupervisor:
                     return
                 from .types import DisplayState
                 from ..adapters.claude_code import STATUS_TO_DISPLAY
+                changed = False
                 for widget_id, ws in list(frame.widgets.items()):
                     current_label = ws.display.label
                     current_anim = ws.display.animation.value if hasattr(ws.display.animation, 'value') else str(ws.display.animation)
@@ -534,8 +535,13 @@ class VibeDeckSupervisor:
                     thinking_cfg = STATUS_TO_DISPLAY.get("thinking", {"icon": "🐙", "color": "#7c3aed", "animation": "pulse", "label": "Thinking"})
                     ds = DisplayState(**thinking_cfg)
                     ws.display = ds
+                    changed = True
                     log.info("[THINKING] widget %s → Thinking (%.1fs silence on terminal %s)",
                              widget_id, self.THINKING_TIMEOUT_S, terminal_id)
+                # Force immediate frame push so the web UI sees the thinking
+                # state before the next tool event overwrites it
+                if changed and hasattr(self, '_web_server'):
+                    await self._web_server.broadcast_frame(terminal_id, frame)
 
             self._thinking_timer = asyncio.create_task(_fire_thinking())
 
