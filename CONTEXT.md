@@ -6,11 +6,22 @@
 
 ### VibeDeck
 
-A physical control surface for local AI workflows that turns an Elgato Stream Deck into a **peripheral awareness device**（余光设备）— a secondary display that lets you monitor AI agents and system status at a glance, without leaving your primary workspace.
+A control surface for local AI workflows that turns any **Terminal** into a **peripheral awareness device**（余光设备）— a secondary display that lets you monitor AI agents and system status at a glance, without leaving your primary workspace. The canonical physical Terminal is an Elgato Stream Deck; virtual Terminals (phone, tablet, browser) are supported as first-class peers.
+
+### Terminal（终端）
+
+A display-and-input grid device that VibeDeck renders onto. A Terminal is a grid of key cells — each cell can show state (icon, color, animation, label) and receive input (press, long-press). All Terminals are equal at the logical layer; they differ only in physical properties (size, resolution, input mechanism).
+
+| Terminal Type | Input | Transport |
+|---|---|---|
+| **Physical Terminal** (e.g. Elgato Stream Deck) | Physical buttons | USB / HID |
+| **Virtual Terminal** (e.g. phone, tablet, browser) | Touch screen | LAN / Bluetooth |
+
+VibeDeck drives one or more Terminals simultaneously, each with its own independent layout.
 
 ### Widget
 
-A self-contained display-and-interaction unit that occupies one (or more) physical keys on the Stream Deck. A Widget can show status, react to presses, run animations, or carry out an interactive workflow.
+A self-contained display-and-interaction unit that occupies one key cell on a Terminal. A Widget can show status, react to presses, run animations, or carry out an interactive workflow.
 
 Widgets are the atomic building block — every key is a Widget.
 
@@ -55,9 +66,26 @@ VibeDeck and external Agents exchange state through three channels, each serving
 | **WebSocket** | Bidirectional | High-real-time interactive communication: approval requests, detailed progress, streaming status. Agents connect to `ws://localhost:<port>/vibedeck/ws` when they need the fast-answer loop. |
 | **MCP（Model Context Protocol）** | Bidirectional | VibeDeck acts as both MCP Server (exposes agent status, widget state, deck layout to external tools) and MCP Client (connects to other MCP servers to ingest monitoring data). This is the fourth channel, designed for AI Agent ↔ VibeDeck structured communication. |
 
+## Terminal Connection
+
+Virtual Terminals (phone, tablet, browser) connect to the daemon over LAN. The connection model:
+
+- **Discovery**: Daemon prints a QR code at startup containing the full connection URL (`http://<host>:<port>/?token=<token>`). User scans with phone to connect instantly. Manual IP:port entry available as fallback.
+- **Network binding**: Web Server defaults to `localhost`. `vibe-deck serve --expose` binds to `0.0.0.0` to allow LAN connections. Token authentication is required regardless of binding.
+- **Auth**: Per-device tokens, persisted to `~/.vibe-deck/config.yaml`. Each Virtual Terminal gets its own token — individually revokable. Token embedded in QR code URL. Daemon validates token on each request (SSE, API).
+- **Rendering**: MVP uses server-side rendering — daemon renders Widgets to PNG images and pushes them to the Virtual Terminal. Client-side rendering deferred to future Bluetooth support.
+- **First connection**: Virtual Terminal user picks grid density (3×4 / 3×5 / 4×8) and optional device name. Layout is saved and auto-reloaded on reconnection.
+
 ## Layout
 
-The user's physical Stream Deck is divided into zones. VibeDeck ships preset templates; users can customize and share their own.
+The user's Terminal is divided into zones. VibeDeck ships preset templates; users can customize and share their own. Each Terminal type has its own layout sizing (e.g. Stream Deck XL = 4×8, phone = app-defined grid).
+
+### Layout Assignment
+
+| Terminal Type | How Layout is Selected |
+|---|---|
+| **Physical Terminal** | Auto-detected at startup. Daemon matches device model to a default template (e.g. Stream Deck XL → `xl-default.yaml`). User can override. |
+| **Virtual Terminal** | On-demand on first connection. User goes through a short setup flow (pick grid size, template) on the phone. Layout is saved and reused on subsequent connections. |
 
 Typical zone breakdown:
 
@@ -89,7 +117,7 @@ VibeDeck runs as a **systemd daemon** (`systemctl enable vibe-deck`) — always 
 |---|---|
 | **Core Daemon** | Lifecycle supervisor. Owns the asyncio event loop, message routing, layout engine, and the Web API (Web editor + external connector endpoints). |
 | **Connectors** | Bridge external Agent state into the core. Each connector is an independent asyncio task: Process Scanner polls `/proc`, File Watcher uses inotify, WS/SSE Clients maintain persistent connections. Connectors push into internal message queues. |
-| **Render Engine** | Consumes display instructions from the core and drives the physical Stream Deck hardware (Pillow → key images, brightness, animations). |
+| **Render Engine** | Consumes display instructions from the core and drives connected Terminals (Pillow → key images, brightness, animations). Each Terminal type has its own render adapter. |
 
 Inter-layer communication uses **asyncio message queues** within a single Python process for v0.1. This avoids external IPC dependencies while keeping concerns separated. Later versions may split Connectors or Render Engine into separate processes via Unix domain sockets.
 
@@ -162,11 +190,15 @@ See `docs/adapter-research.md` for detailed per-tool integration analysis.
 
 ## Resilience
 
-The Stream Deck is a **display and input terminal** — the daemon is the brain. If the Deck is physically unplugged and re-plugged, the Render Engine reconnects automatically without losing state. The Core Daemon, Connectors, and layout state all continue normally during the disconnect window.
+The Terminal is a **display and input device** — the daemon is the brain. If a Physical Terminal is unplugged and re-plugged, the Render Engine reconnects automatically without losing state. If a Virtual Terminal loses its network connection, it reconnects and resyncs automatically. The Core Daemon, Connectors, and layout state all continue normally during the disconnect window.
 
-## Multi-Device (future)
+## Multi-Terminal
 
-v0.1 supports a single Stream Deck. Long-term: one daemon drives multiple Decks, each with its own independent layout file — e.g. an XL for monitoring + a Mini for approvals.
+One daemon drives multiple Terminals simultaneously, each with its own independent layout file — e.g. a Stream Deck XL for monitoring + a phone for approvals, or two phones placed at different workstations. No hard limit on the number of connected Terminals.
+
+### Interaction Model
+
+All Terminals support the same interaction model: **display + click**. Widgets show status and respond to presses. Layout editing (drag, rearrange, delete Widgets) is done exclusively through the desktop Web Editor or CLI — never on the Terminal itself. A phone Terminal is not a configuration tool; it's a monitoring and interaction surface.
 
 ## Community Adapters
 
