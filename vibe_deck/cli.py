@@ -44,6 +44,7 @@ def main():
 
     _serve_parser(sub)
     _status_parser(sub)
+    _whoami_parser(sub)
     _demo_parser(sub)
     _widget_parser(sub)
     _layout_parser(sub)
@@ -68,6 +69,7 @@ def main():
     cmd_map = {
         "serve": cmd_serve,
         "status": cmd_status,
+        "whoami": cmd_whoami,
         "demo": cmd_demo,
         "widget": cmd_widget,
         "layout": cmd_layout,
@@ -119,6 +121,18 @@ def _status_parser(sub):
         epilog="Example: vibe-deck status --watch")
     p.add_argument("--watch", action="store_true", help="Live-updating dashboard")
     p.add_argument("--json", action="store_true", help="Machine-readable JSON output")
+
+
+def _whoami_parser(sub):
+    p = sub.add_parser("whoami", help="Identify this agent instance and show its VibeDeck status",
+        description="Walk up the process tree to find a Claude Code ancestor, then query the VibeDeck daemon for the matching widget. Use this inside Claude Code hooks or from the same terminal session.",
+        epilog="Examples:\n  vibe-deck whoami\n  vibe-deck whoami --json\n  vibe-deck whoami --pid 12345")
+    p.add_argument("--pid", type=int, default=0,
+                   help="Explicit PID (auto-detected from process tree if omitted)")
+    p.add_argument("--json", action="store_true",
+                   help="Machine-readable JSON output")
+    p.add_argument("--port", type=int, default=9734,
+                   help="Daemon port (default: 9734)")
 
 
 def _demo_parser(sub):
@@ -365,6 +379,88 @@ def _get_status_data() -> dict:
         return {"version": __version__, "agents": agents}
     except Exception:
         return {"version": __version__, "agents": []}
+
+
+def _find_agent_ancestor_pid() -> int:
+    """Walk up the process tree looking for a known agent process.
+
+    Starts from the current process and checks each ancestor against a
+    set of known agent process names (claude, opencode, etc.).  Returns
+    the first matching PID, or the current PID if no agent ancestor is
+    found.
+    """
+    try:
+        import psutil
+    except ImportError:
+        return os.getpid()
+
+    KNOWN_AGENTS = {"claude", "claude.exe", "opencode", "openclaw"}
+
+    try:
+        proc = psutil.Process(os.getpid())
+        for _ in range(10):  # max depth to avoid infinite loops
+            name = proc.name() or ""
+            if any(agent in name.lower() for agent in KNOWN_AGENTS):
+                return proc.pid
+            proc = proc.parent()
+            if proc is None:
+                break
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        pass
+
+    return os.getpid()
+
+
+def cmd_whoami(args):
+    """Identify this agent instance and show its VibeDeck widget state."""
+    pid = args.pid or _find_agent_ancestor_pid()
+
+    try:
+        import urllib.request
+        url = f"http://localhost:{args.port}/api/widgets?pid={pid}"
+        resp = urllib.request.urlopen(url, timeout=3)
+        data = json.loads(resp.read())
+    except Exception as e:
+        if getattr(args, 'json', False):
+            print(json.dumps({"found": False, "error": str(e)}))
+        else:
+            print(f"⚠️  Could not reach VibeDeck daemon on port {args.port}")
+            print(f"   Error: {e}")
+            print(f"   Is the daemon running?  vibe-deck serve")
+        return
+
+    if args.json:
+        data["_query_pid"] = pid
+        print(json.dumps(data, indent=2))
+        return
+
+    if not data.get("found"):
+        print(f"🔍 No widget found for PID {pid}")
+        print(f"   Is the agent process running?")
+        print(f"   Detected PID: {pid}")
+        return
+
+    widget_id = data["widget_id"]
+    display = data["display"]
+    meta = data["meta"]
+    terminal = data["terminal_id"]
+    key_index = data.get("key_index")
+
+    print()
+    print("🦞  VibeDeck — Who Am I?")
+    print(f"   PID:         {pid}")
+    print(f"   Widget ID:   {widget_id}")
+    print(f"   Terminal:    {terminal}" + (f" (key {key_index})" if key_index is not None else ""))
+    print(f"   Agent:       {meta.get('agent', 'unknown')}")
+    session_id = meta.get("session_id", "")
+    if session_id:
+        print(f"   Session:     {session_id[:16]}...")
+    print()
+    print(f"   Display:     {display.get('icon', '')} {display.get('label', '')}")
+    print(f"   Color:       {display.get('color', '')}")
+    print(f"   Animation:   {display.get('animation', '')}")
+    print(f"   Status:      {meta.get('status', 'unknown')}")
+    print()
 
 
 def cmd_widget(args):

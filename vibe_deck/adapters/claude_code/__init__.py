@@ -166,13 +166,19 @@ class ClaudeCodeAdapter:
         )
 
     def as_widget_state(self) -> WidgetState:
-        """Produce a WidgetState with the current status."""
+        """Produce a WidgetState with the current status.
+
+        Widget IDs are PID-based so that multiple Claude Code instances
+        each get their own widget (e.g. ``claude-code-12345`` instead of
+        the old colliding ``claude-code-auto``).
+        """
         display_cfg = STATUS_TO_DISPLAY.get(
             self._status, STATUS_TO_DISPLAY["offline"]
         )
         ds = DisplayState(**display_cfg)
+        widget_id = f"{self.name}-{self._pid}" if self._pid else f"{self.name}-auto"
         return WidgetState(
-            id=f"{self.name}-auto",
+            id=widget_id,
             type=WidgetType.AGENT,
             display=ds,
             meta={

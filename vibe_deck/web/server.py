@@ -72,6 +72,7 @@ class VibeDeckWebServer:
         self._app.router.add_get("/api/terminal/status", self._terminal_status)
         self._app.router.add_post("/api/terminal/register", self._terminal_register)
         self._app.router.add_get("/api/terminals", self._list_terminals)
+        self._app.router.add_get("/api/widgets", self._find_widget)
         self._app.router.add_get("/api/layouts", self._list_layouts)
         self._app.router.add_post("/api/layouts/save", self._save_layout)
         self._app.router.add_post("/api/layouts/load", self._load_layout)
@@ -378,6 +379,63 @@ class VibeDeckWebServer:
         # Sort: default first, then by name
         terminals.sort(key=lambda t: (0 if t["id"] == "default" else 1, t["name"]))
         return web.json_response({"terminals": terminals})
+
+    async def _find_widget(self, request: web.Request) -> web.Response:
+        """Find a widget by PID or session_id across all terminals.
+
+        Query params:
+          ?pid=N         — search by process ID (meta.pid)
+          ?session_id=S  — search by session_id (meta.session_id)
+
+        Returns the first matching widget with its terminal context,
+        or ``{"found": false}`` if no match.
+        """
+        pid_str = request.query.get("pid", "")
+        session_id = request.query.get("session_id", "")
+
+        if not pid_str and not session_id:
+            return web.json_response(
+                {"found": False, "error": "pass ?pid=N or ?session_id=S"},
+                status=400,
+            )
+
+        target_pid = int(pid_str) if pid_str else None
+
+        for terminal_id in self._engine.list_terminals():
+            frame = self._engine.get_frame(terminal_id)
+            if frame is None:
+                continue
+            for widget_id, ws in frame.widgets.items():
+                meta = ws.meta
+                if target_pid is not None and meta.get("pid") == target_pid:
+                    return web.json_response({
+                        "found": True,
+                        "terminal_id": terminal_id,
+                        "widget_id": widget_id,
+                        "type": ws.type.value,
+                        "display": ws.display.model_dump(),
+                        "meta": meta,
+                        "key_index": self._widget_key_index(frame, widget_id),
+                    })
+                if session_id and meta.get("session_id", "").startswith(session_id):
+                    return web.json_response({
+                        "found": True,
+                        "terminal_id": terminal_id,
+                        "widget_id": widget_id,
+                        "type": ws.type.value,
+                        "display": ws.display.model_dump(),
+                        "meta": meta,
+                        "key_index": self._widget_key_index(frame, widget_id),
+                    })
+
+        return web.json_response({"found": False})
+
+    def _widget_key_index(self, frame, widget_id: str) -> int | None:
+        """Return the key index where a widget is placed, or None."""
+        try:
+            return frame.keymap.index(widget_id)
+        except ValueError:
+            return None
 
     async def _list_layouts(self, request: web.Request) -> web.Response:
         """List available layout files (excluding autosave internal files)."""
