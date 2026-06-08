@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import os
+import socket
 import sys
 import time
 
@@ -181,15 +182,51 @@ def _skill_parser(sub):
 # ── Command handlers ─────────────────────────────
 
 
+def _get_lan_ip() -> str:
+    """Detect the primary LAN IP address."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
+
+
+def _print_qr(url: str) -> None:
+    """Print an ASCII QR code to the terminal."""
+    try:
+        import qrcode
+        qr = qrcode.QRCode(border=1)
+        qr.add_data(url)
+        qr.make(fit=True)
+        qr.print_ascii()
+    except ImportError:
+        print(f"   🔗 Connect: {url}")
+
+
 def cmd_serve(args):
     """Start the VibeDeck daemon."""
-    host = "0.0.0.0" if getattr(args, 'expose', False) else "localhost"
+    expose = getattr(args, 'expose', False)
+    host = "0.0.0.0" if expose else "localhost"
     print(f"\n🦞  VibeDeck {__version__}")
     print(f"   Render:   {'virtual-only' if getattr(args, 'no_physical', False) else args.render}")
     print(f"   Web UI:   http://{host}:{args.port}")
     print(f"   Demo:     {'yes' if args.demo else 'no'}")
-    print(f"   LAN:      {'yes' if getattr(args, 'expose', False) else 'no (--expose to enable)'}")
+    print(f"   LAN:      {'yes' if expose else 'no (--expose to enable)'}")
     print(f"   Ctrl+C to stop\n")
+
+    if expose:
+        from .config import load_config
+        config = load_config()
+        if config.terminals:
+            token = config.terminals[0].token
+            lan_ip = _get_lan_ip()
+            url = f"http://{lan_ip}:{args.port}/?token={token}"
+            print("   📱 Scan to connect:\n")
+            _print_qr(url)
+            print(f"\n   {url}\n")
 
     from .core.event_loop import run_supervisor
 
@@ -218,35 +255,54 @@ def cmd_demo(args):
 
 
 def cmd_status(args):
-    """Show terminal dashboard of agent and deck state."""
+    """Show terminal dashboard: terminals, agents, and connection info."""
     if args.watch:
         _cmd_status_watch(args)
         return
 
-    # Try to get live data from daemon, fall back to mock
-    status_data = _get_status_data()
+    from .config import load_config
+
+    config = load_config()
+    agents_data = _get_status_data()
 
     if getattr(args, 'json', False):
-        print(json.dumps(status_data, indent=2))
+        output = {
+            "version": __version__,
+            "terminals": [t.to_dict() for t in config.terminals],
+            "agents": agents_data.get("agents", []),
+        }
+        print(json.dumps(output, indent=2))
         return
 
     print("\n🦞  VibeDeck Status")
     print(f"   Time: {time.strftime('%H:%M:%S')}")
     print()
 
-    agents = status_data.get("agents", [])
-    if not agents:
+    # Terminals
+    terminals = config.terminals
+    print(f" Terminals ({len(terminals)} registered):")
+    if terminals:
+        print(f" {'NAME':<16} {'TYPE':<10} {'GRID':<8} {'TOKEN':<20}")
+        print("-" * 56)
+        for t in terminals:
+            token_preview = t.token[:12] + "..." if len(t.token) > 12 else t.token
+            print(f" {t.name:<15} {t.type:<10} {t.grid:<8} {token_preview:<20}")
+    else:
+        print("   (none)")
+    print()
+
+    # Agents
+    agents = agents_data.get("agents", [])
+    print(f" Agents ({len(agents)} active):")
+    if agents:
+        print(f" {'NAME':<20} {'ICON':<6} {'STATUS':<14}")
+        print("-" * 42)
+        for a in agents:
+            icon = a.get('icon', '')
+            print(f" {a['name']:<19} {icon:<6} {a['status']:<14}")
+    else:
         print("   No agents detected.")
         print("   Start a supported agent or run: vibe-deck demo")
-        print()
-        return
-
-    # Table
-    print(f" {'AGENT':<16} {'STATUS':<14} {'ICON':<6} {'INFO':<20}")
-    print("-" * 60)
-    for a in agents:
-        icon = a.get('icon', '')
-        print(f" {a['name']:<15} {a['status']:<14} {icon:<6} {a.get('info', ''):<20}")
     print()
 
 

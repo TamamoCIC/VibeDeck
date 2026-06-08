@@ -2,8 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>VibeDeck Simulator</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>VibeDeck</title>
+<link rel="manifest" href="/static/manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0f0f1a">
 <style>
   :root {
     --bg: #0f0f1a;
@@ -148,19 +152,71 @@
   }
   .key:hover .tooltip { opacity: 1; }
 
+  /* Setup Wizard */
+  .wizard-container {
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; min-height: 80vh; padding: 20px;
+  }
+  .wizard-card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 16px; padding: 32px 24px; max-width: 380px; width: 100%;
+    text-align: center;
+  }
+  .wizard-card h2 { font-size: 1.4rem; margin-bottom: 6px; }
+  .wizard-card .wizard-sub { color: var(--text-dim); font-size: 0.85rem; margin-bottom: 24px; }
+  .grid-options { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; justify-content: center; }
+  .grid-option {
+    background: var(--surface); border: 2px solid var(--border);
+    border-radius: 12px; padding: 16px 12px; cursor: pointer;
+    text-align: center; min-width: 90px; transition: all 0.15s;
+    flex: 1; max-width: 110px;
+  }
+  .grid-option:hover { border-color: var(--info); }
+  .grid-option.selected { border-color: var(--accent); background: #1a2e1a; }
+  .grid-option .go-size { font-size: 1.3rem; font-weight: 700; margin-bottom: 4px; }
+  .grid-option .go-label { font-size: 0.7rem; color: var(--text-dim); }
+  .grid-option .go-keys { font-size: 0.65rem; color: #555; margin-top: 2px; }
+  .wizard-input {
+    width: 100%; padding: 10px 14px; background: var(--surface);
+    border: 1px solid var(--border); border-radius: 10px;
+    color: var(--text); font-size: 0.9rem; margin-bottom: 16px;
+    text-align: center; outline: none;
+  }
+  .wizard-input:focus { border-color: var(--accent); }
+  .wizard-btn {
+    width: 100%; padding: 12px; background: var(--accent);
+    color: #000; border: none; border-radius: 10px;
+    font-size: 1rem; font-weight: 600; cursor: pointer;
+    transition: all 0.15s;
+  }
+  .wizard-btn:hover { filter: brightness(1.15); }
+  .wizard-btn:active { transform: scale(0.97); }
+  .wizard-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .wizard-error { color: var(--danger); font-size: 0.8rem; margin-top: 10px; min-height: 20px; }
+
   /* Responsive */
   @media (max-width: 700px) {
     .key { width: 56px; height: 56px; font-size: 1.2rem; }
     .key .icon { font-size: 1.3rem; }
     .key .label { font-size: 0.5rem; max-width: 48px; }
   }
+  @media (max-width: 500px) {
+    .deck-grid { gap: 3px; }
+    .key { width: 48px; height: 48px; font-size: 1rem; }
+    .key .icon { font-size: 1.1rem; }
+    .key .label { font-size: 0.45rem; max-width: 40px; }
+    .toolbar select, .toolbar button { font-size: 0.75rem; padding: 5px 10px; }
+  }
 </style>
 </head>
 <body>
 
+<!-- ═══ App View (grid) ═══ -->
+<div id="app-view" style="display:none">
+
 <div class="header">
-  <h1><span>🦞</span> VibeDeck Simulator</h1>
-  <p class="sub">Virtual Terminal — build, test, and monitor without hardware</p>
+  <h1><span>🦞</span> VibeDeck</h1>
+  <p class="sub" id="headerName">Virtual Terminal</p>
 </div>
 
 <div class="toolbar">
@@ -192,6 +248,43 @@
   <p class="log" id="log">Click a key to simulate press</p>
   <p class="shortcuts">Keys <kbd>0</kbd>-<kbd>9</kbd> simulate key presses &nbsp;|&nbsp; <kbd>R</kbd> reset &nbsp;|&nbsp; <kbd>M</kbd> toggle mode</p>
 </div>
+
+</div><!-- /app-view -->
+
+<!-- ═══ Setup Wizard View ═══ -->
+<div id="wizard-view" style="display:none">
+
+<div class="wizard-container">
+  <div class="wizard-card">
+    <h2>🦞 Welcome to VibeDeck</h2>
+    <p class="wizard-sub">Connect this device as a monitoring terminal</p>
+
+    <p style="font-size:0.8rem;color:var(--text-dim);margin-bottom:10px;">Choose your grid layout</p>
+    <div class="grid-options" id="gridOptions">
+      <div class="grid-option" data-grid="3x4" onclick="selectGrid(this)">
+        <div class="go-size">3×4</div>
+        <div class="go-label">Sparse</div>
+        <div class="go-keys">12 keys</div>
+      </div>
+      <div class="grid-option" data-grid="3x5" onclick="selectGrid(this)">
+        <div class="go-size">3×5</div>
+        <div class="go-label">Standard</div>
+        <div class="go-keys">15 keys</div>
+      </div>
+      <div class="grid-option selected" data-grid="4x8" onclick="selectGrid(this)">
+        <div class="go-size">4×8</div>
+        <div class="go-label">Dense</div>
+        <div class="go-keys">32 keys</div>
+      </div>
+    </div>
+
+    <input class="wizard-input" id="wizardName" type="text" placeholder="Device name (optional)" maxlength="20">
+    <button class="wizard-btn" id="wizardBtn" onclick="doRegister()">Connect</button>
+    <div class="wizard-error" id="wizardError"></div>
+  </div>
+</div>
+
+</div><!-- /wizard-view -->
 
 <script>
   const DECK_SIZES = {
@@ -402,14 +495,168 @@
     }
   });
 
+  // ── Token & Routing ────────────────────────────
+
+  function getToken() {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('token') || localStorage.getItem('vibedeck_token') || '';
+  }
+
+  function saveToken(t) {
+    localStorage.setItem('vibedeck_token', t);
+    // Update URL without reload
+    const url = new URL(window.location);
+    url.searchParams.set('token', t);
+    window.history.replaceState({}, '', url);
+  }
+
+  let selectedGrid = '4x8';
+
+  function selectGrid(el) {
+    document.querySelectorAll('.grid-option').forEach(o => o.classList.remove('selected'));
+    el.classList.add('selected');
+    selectedGrid = el.dataset.grid;
+  }
+
+  async function doRegister() {
+    const btn = document.getElementById('wizardBtn');
+    const err = document.getElementById('wizardError');
+    const name = document.getElementById('wizardName').value.trim() || 'My Terminal';
+    btn.disabled = true;
+    btn.textContent = 'Connecting...';
+    err.textContent = '';
+
+    try {
+      const resp = await fetch('/api/terminal/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, grid: selectedGrid, type: 'virtual' }),
+      });
+      const data = await resp.json();
+      if (resp.ok && data.terminal) {
+        saveToken(data.terminal.token);
+        showApp(data.terminal.grid, data.terminal.name);
+      } else {
+        err.textContent = data.error || 'Registration failed';
+      }
+    } catch (e) {
+      err.textContent = 'Connection failed. Is the daemon running?';
+    }
+    btn.disabled = false;
+    btn.textContent = 'Connect';
+  }
+
+  function showApp(grid, name) {
+    document.getElementById('wizard-view').style.display = 'none';
+    document.getElementById('app-view').style.display = '';
+    if (name) {
+      document.getElementById('headerName').textContent = name + ' — Virtual Terminal';
+    }
+    // Set deck type dropdown to match grid
+    const sel = document.getElementById('deckType');
+    if (grid) {
+      for (let o of sel.options) {
+        if (o.value === grid) { o.selected = true; break; }
+      }
+    }
+    changeDeck();
+    connectSSE();
+  }
+
+  // ── Check token on load ────────────────────────
+
+  async function init() {
+    const token = getToken();
+    if (!token) {
+      // No token — show wizard
+      document.getElementById('wizard-view').style.display = '';
+      document.getElementById('log').textContent = 'Ready — click a key or press 0-9';
+      return;
+    }
+
+    // Check if token is registered
+    try {
+      const resp = await fetch('/api/terminal/status?token=' + token);
+      if (resp.ok) {
+        const data = await resp.json();
+        showApp(data.terminal.grid, data.terminal.name);
+      } else {
+        // Token not registered — show wizard
+        document.getElementById('wizard-view').style.display = '';
+        document.getElementById('wizardName').placeholder = 'My Terminal';
+      }
+    } catch (e) {
+      // Daemon not running — show wizard anyway
+      document.getElementById('wizard-view').style.display = '';
+    }
+  }
+
+  // ── Updated SSE with token ─────────────────────
+
+  function connectSSE() {
+    const statusDot = document.getElementById('statusDot');
+    const statusLabel = document.getElementById('statusLabel');
+    const token = getToken();
+
+    const es = new EventSource('/api/events?token=' + token);
+    let connected = false;
+
+    es.onopen = () => {
+      connected = true;
+      sseRetryDelay = 1000;
+      statusDot.className = 'status-dot online';
+      statusLabel.textContent = 'Live';
+
+      setTimeout(() => {
+        if (!window._lastKeys) {
+          statusLabel.textContent = 'Demo (no daemon frames)';
+          updateKeys(DEMO_KEY_DATA);
+        }
+      }, 3000);
+    };
+
+    es.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'frame') {
+          window._lastKeys = data.keys;
+          updateKeys(data.keys);
+          statusDot.className = 'status-dot online';
+          statusLabel.textContent = 'Live';
+        }
+      } catch(e) {}
+    };
+
+    es.onerror = () => {
+      if (connected) {
+        statusDot.className = 'status-dot offline';
+        statusLabel.textContent = 'Disconnected';
+        connected = false;
+      }
+      es.close();
+      setTimeout(connectSSE, Math.min(sseRetryDelay, 30000));
+      sseRetryDelay *= 2;
+    };
+  }
+
+  function pressKey(i) {
+    const token = getToken();
+    const log = document.getElementById('log');
+    log.textContent = '🖱 Key ' + i + ' pressed';
+    log.style.color = 'var(--accent)';
+    setTimeout(() => { log.style.color = 'var(--text-dim)'; }, 600);
+
+    fetch('/api/key/' + i + '?token=' + token, { method: 'POST' }).catch(() => {});
+  }
+
   // ── Init ──────────────────────────────────────
 
-  buildGrid(currentDeck);
-  connectSSE();
+  init();
 
   // Show demo keys immediately while connecting
   setTimeout(() => {
-    if (!window._lastKeys) {
+    const appView = document.getElementById('app-view');
+    if (appView.style.display !== 'none' && !window._lastKeys) {
       updateKeys(DEMO_KEY_DATA);
       document.getElementById('statusLabel').textContent = 'Demo mode';
       document.getElementById('statusDot').className = 'status-dot waiting';
