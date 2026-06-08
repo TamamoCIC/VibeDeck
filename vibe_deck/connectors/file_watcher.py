@@ -54,6 +54,7 @@ class FileWatcher(BaseConnector):
         self._watch_dir = watch_dir or AGENTS_DIR
         self._task: asyncio.Task | None = None
         self._offsets: dict[str, int] = {}  # path stem → last read byte offset
+        self._last_truncation: dict[str, float] = {}  # path name → monotonic timestamp
 
     async def start(self) -> None:
         """Start watching the agents directory."""
@@ -282,16 +283,38 @@ class FileWatcher(BaseConnector):
 
         Runs in a thread to avoid blocking the asyncio event loop for
         large files.
+
+        Includes a per-file cooldown (5s) so truncation doesn't fire on
+        every single event when Claude Code is producing them rapidly.
+        After writing, updates the offset tracker to the exact byte count
+        written — this prevents the watchfiles event triggered by our own
+        write from re-reading the entire file from offset 0.
         """
+        import time as _time
+
         try:
+            # ── Cooldown guard ──────────────────────────────
+            now = _time.monotonic()
+            last = self._last_truncation.get(path.name, 0)
+            if now - last < 5.0:
+                return  # too soon since last truncation
+            self._last_truncation[path.name] = now
+
             text = await asyncio.to_thread(path.read_text, encoding="utf-8")
             lines = [ln for ln in text.split("\n") if ln]
             if len(lines) <= max_lines:
                 return
             truncated = "\n".join(lines[-max_lines:]) + "\n"
+            truncated_bytes = truncated.encode("utf-8")
             await asyncio.to_thread(
                 path.write_text, truncated, encoding="utf-8"
             )
+            # Update offset to the exact bytes we wrote so the
+            # watchfiles event triggered by this write is a no-op.
+            # Using len(truncated_bytes) instead of stat() avoids
+            # accidentally skipping concurrent writes from Claude Code
+            # that landed between our write and the stat call.
+            self._offsets[path.name] = len(truncated_bytes)
             log.debug("Truncated %s: %d → %d lines", path.name, len(lines), max_lines)
         except Exception:
             log.debug("Failed to truncate %s", path, exc_info=True)

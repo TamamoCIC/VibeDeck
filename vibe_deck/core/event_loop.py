@@ -84,6 +84,7 @@ class VibeDeckSupervisor:
         self._thinking_timer: asyncio.Task | None = None
         self._thinking_timer_lock = asyncio.Lock()
         self._last_hook_activity: float = 0.0  # monotonic timestamp of last hook event
+        self._last_autosave: float = 0.0  # monotonic timestamp of last autosave (debounce)
 
     # ── Public API ─────────────────────────────────
 
@@ -268,13 +269,19 @@ class VibeDeckSupervisor:
                 try:
                     msg = await asyncio.wait_for(q.get(), timeout=1.0)
                     await self._handle_message(msg)
-                    # Persist layout after every state change — ensures
-                    # survival across crashes, not just clean shutdowns
+                    # Persist layout after state changes — debounced
+                    # to at most 1 save per second so rapid-fire event
+                    # bursts (e.g. truncation re-reads, tool cascades)
+                    # don't hammer the disk with redundant writes.
                     if msg.type in (MessageType.WIDGET_STATE_UPDATE,
                                     MessageType.AGENT_ONLINE,
                                     MessageType.AGENT_OFFLINE):
                         try:
-                            self._engine.autosave_all()
+                            import time as _time
+                            now = _time.monotonic()
+                            if now - self._last_autosave >= 1.0:
+                                self._engine.autosave_all()
+                                self._last_autosave = now
                         except Exception:
                             pass
                 except asyncio.TimeoutError:
