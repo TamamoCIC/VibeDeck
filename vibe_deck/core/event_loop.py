@@ -373,7 +373,6 @@ class VibeDeckSupervisor:
             import time as _time
 
             updated_tids: list[str] = []
-            _defer_handled = False  # only defer once across all terminals
             for tid in self._engine.list_terminals():
                 frame = self._engine.get_frame(tid)
                 if frame is None:
@@ -397,8 +396,7 @@ class VibeDeckSupervisor:
 
                 if (_hook_event in ("PreToolUse", "PostToolUse")
                         and hasattr(existing, '_waiting_since')
-                        and (now - existing._waiting_since) < MIN_WAITING_DISPLAY_S
-                        and not _defer_handled):
+                        and (now - existing._waiting_since) < MIN_WAITING_DISPLAY_S):
                     existing._pending_display = ds
                     existing._pending_meta = data
                     remaining = MIN_WAITING_DISPLAY_S - (now - existing._waiting_since)
@@ -406,7 +404,11 @@ class VibeDeckSupervisor:
                              _hook_event, remaining)
                     self._schedule_deferred_display(tid, widget_id, remaining)
                     updated_tids.append(tid)
-                    _defer_handled = True
+                    # Clear _waiting_since so the NEXT tool event
+                    # displays immediately instead of deferring again.
+                    # Without this, rapid-fire tool calls create a
+                    # cascading chain of defers that never resolves.
+                    del existing._waiting_since
                     continue
 
                 if _hook_event == "Stop":
