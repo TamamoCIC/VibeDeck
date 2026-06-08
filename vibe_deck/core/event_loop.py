@@ -315,20 +315,30 @@ class VibeDeckSupervisor:
         """Gracefully shut down all components."""
         log.info("Shutting down...")
 
-        # Cancel all background tasks
+        # 1. Close SSE connections first (prevents aiohttp InvalidStateError on Windows)
+        if hasattr(self, '_web_server'):
+            self._web_server.close_sse_connections()
+
+        # 2. Cancel all background tasks
         for task in self._tasks:
             if not task.done():
                 task.cancel()
         if self._tasks:
             await asyncio.gather(*self._tasks, return_exceptions=True)
 
-        # Stop web server
+        # 3. Stop web server
         if hasattr(self, '_web_server'):
-            await self._web_server.stop()
+            try:
+                await self._web_server.stop()
+            except Exception:
+                log.debug("Web server stop error (ignored)", exc_info=True)
 
-        # Close hardware
+        # 4. Close hardware
         if hasattr(self, '_renderer') and hasattr(self._renderer, 'close'):
-            self._renderer.close()
+            try:
+                self._renderer.close()
+            except Exception:
+                pass
 
         log.info("Shutdown complete")
 

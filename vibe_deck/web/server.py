@@ -89,8 +89,27 @@ class VibeDeckWebServer:
         await site.start()
         log.info("Web server started at http://%s:%d (expose=%s)", host, self._port, self._expose)
 
+    def close_sse_connections(self) -> None:
+        """Close all active SSE connections gracefully.
+
+        Must be called before stop() to prevent aiohttp InvalidStateError
+        on Windows during shutdown.
+        """
+        count = sum(len(clients) for clients in self._clients.values())
+        if count:
+            log.info("Closing %d SSE connection(s)...", count)
+            for terminal_id, clients in list(self._clients.items()):
+                for resp in clients:
+                    try:
+                        resp.force_close()
+                    except Exception:
+                        pass
+            self._clients.clear()
+            self._renderers.clear()
+
     async def stop(self) -> None:
         """Stop the web server."""
+        self.close_sse_connections()
         if self._runner:
             await self._runner.cleanup()
             self._runner = None

@@ -305,6 +305,16 @@ def cmd_status(args):
         print("   Start a supported agent or run: vibe-deck demo")
     print()
 
+    # QR Code for reconnection (uses current LAN IP)
+    if terminals:
+        lan_ip = _get_lan_ip()
+        if lan_ip != "127.0.0.1":
+            port = config.port
+            url = f"http://{lan_ip}:{port}/?token={terminals[0].token}"
+            print(" 📱 Scan to connect:\n")
+            _print_qr(url)
+            print(f"\n   {url}\n")
+
 
 def _cmd_status_watch(args):
     """Live-updating terminal dashboard."""
