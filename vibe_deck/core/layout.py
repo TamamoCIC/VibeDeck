@@ -15,6 +15,10 @@ from .types import DisplayState, LayoutFrame, WidgetState
 log = logging.getLogger("vibe_deck.core.layout")
 
 DEFAULT_TERMINAL = "default"
+AUTOSAVE_PREFIX = "_autosave"
+
+# Offline display state used when restoring agent widgets from autosave
+_OFFLINE_DISPLAY = {"icon": "⚫", "color": "#374151", "animation": "none", "label": "Offline"}
 
 
 class LayoutEngine:
@@ -55,10 +59,34 @@ class LayoutEngine:
 
         If the terminal already exists, returns the existing frame
         (does not overwrite).
+
+        On first registration, tries to restore state from the autosave
+        file (~/.vibe-deck/layouts/_autosave-<terminal_id>.yaml). Agent
+        widgets restored from autosave are reset to offline to avoid
+        showing stale status.
         """
         if terminal_id in self._frames:
             log.debug("Terminal %r already registered, reusing", terminal_id)
             return self._frames[terminal_id]
+
+        from ..config import LAYOUTS_DIR
+
+        # Try to restore from autosave
+        autosave_path = LAYOUTS_DIR / f"{AUTOSAVE_PREFIX}-{terminal_id}.yaml"
+        if autosave_path.exists():
+            try:
+                frame = LayoutFrame.from_yaml(str(autosave_path))
+                # Reset agent widgets to offline — avoid stale Running/Thinking
+                for ws in frame.widgets.values():
+                    if ws.type.value == "agent":
+                        ws.display = DisplayState(**_OFFLINE_DISPLAY)
+                self._frames[terminal_id] = frame
+                log.info("Terminal %r restored from autosave (%d widgets, %s)",
+                         terminal_id, len(frame.widgets), autosave_path.name)
+                return frame
+            except Exception:
+                log.warning("Failed to load autosave for %r, starting fresh", terminal_id,
+                            exc_info=True)
 
         frame = LayoutFrame.for_grid(rows, cols, display_name or f"{rows}x{cols}")
         self._frames[terminal_id] = frame
@@ -106,6 +134,44 @@ class LayoutEngine:
             frame.widgets[widget.id] = widget
         return frame
 
+    def upsert_widget(
+        self, widget: WidgetState, terminal_id: str = DEFAULT_TERMINAL
+    ) -> LayoutFrame | None:
+        """Update or add a Widget, auto-placing new widgets on the first empty key.
+
+        If the widget already exists in the frame, only its display/meta
+        are updated (existing key position is preserved).  If it is new,
+        the widget is placed on the first empty slot in the keymap.
+
+        Returns the updated frame, or None if the terminal is unknown.
+        """
+        frame = self._frames.get(terminal_id)
+        if frame is None:
+            log.warning("upsert_widget: unknown terminal %r", terminal_id)
+            return None
+
+        existing = frame.widgets.get(widget.id)
+        if existing is not None:
+            existing.display = widget.display
+            existing.meta.update(widget.meta)
+            if existing.type != widget.type:
+                existing.type = widget.type
+            return frame
+
+        # New widget — auto-place on first empty key
+        empty = frame.first_empty_key()
+        if empty is not None:
+            frame.place_widget(widget, empty)
+            log.debug("Widget %r auto-placed at key %d on terminal %r",
+                      widget.id, empty, terminal_id)
+        else:
+            # No empty slots — add to dict only, won't render
+            frame.widgets[widget.id] = widget
+            log.warning("Widget %r has no empty key slot on terminal %r (%d keys full)",
+                        widget.id, terminal_id, len(frame.keymap))
+
+        return frame
+
     def remove_widget(self, widget_id: str, terminal_id: str = DEFAULT_TERMINAL) -> None:
         """Remove a Widget from a terminal's frame."""
         frame = self._frames.get(terminal_id)
@@ -129,3 +195,24 @@ class LayoutEngine:
             raise ValueError(f"Unknown terminal: {terminal_id!r}")
         frame.to_yaml(path)
         self._layout_name = path
+
+    def autosave_all(self) -> None:
+        """Persist all terminal frames to autosave files.
+
+        Each frame is written to:
+            ~/.vibe-deck/layouts/_autosave-<terminal_id>.yaml
+
+        The _autosave- prefix distinguishes auto-saved state from
+        user-managed layout files.  These files are written on daemon
+        shutdown and after every widget state update so that the
+        current layout survives crashes and restarts.
+        """
+        from ..config import LAYOUTS_DIR
+
+        LAYOUTS_DIR.mkdir(parents=True, exist_ok=True)
+        for terminal_id, frame in self._frames.items():
+            path = LAYOUTS_DIR / f"{AUTOSAVE_PREFIX}-{terminal_id}.yaml"
+            try:
+                frame.to_yaml(str(path))
+            except Exception:
+                log.exception("Failed to autosave terminal %r", terminal_id)

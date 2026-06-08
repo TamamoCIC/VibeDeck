@@ -168,6 +168,13 @@ class LayoutFrame(BaseModel):
         self.keymap[key_index] = widget.id
         self.widgets[widget.id] = widget
 
+    def first_empty_key(self) -> int | None:
+        """Return the index of the first empty key slot, or None if full."""
+        for i, wid in enumerate(self.keymap):
+            if wid is None:
+                return i
+        return None
+
     def remove_widget(self, widget_id: str) -> None:
         """Remove a Widget from the layout."""
         self.keymap = [None if wid == widget_id else wid for wid in self.keymap]
