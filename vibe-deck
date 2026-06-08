@@ -1,6 +1,34 @@
 #!/usr/bin/env bash
-# VibeDeck Launcher — Linux/macOS
-# Usage: ./vibe-deck serve --demo
+# ================================================================
+#  VibeDeck Launcher — Linux / macOS
+#  Usage: ./vibe-deck serve --expose --demo
+# ================================================================
 set -euo pipefail
+
 cd "$(dirname "$0")"
-PYTHONUTF8=1 python -m vibe_deck.cli "$@"
+
+# ---- Python detection ----
+PYTHON=""
+for candidate in python3 python; do
+    if command -v "$candidate" &>/dev/null; then
+        ver=$("$candidate" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "0.0")
+        major=$(echo "$ver" | cut -d. -f1)
+        minor=$(echo "$ver" | cut -d. -f2)
+        if [ "$major" -ge 3 ] && [ "$minor" -ge 10 ]; then
+            PYTHON="$candidate"
+            break
+        fi
+    fi
+done
+
+if [ -z "$PYTHON" ]; then
+    echo "[ERROR] Python 3.10+ not found. Install it first." >&2
+    exit 1
+fi
+
+# ---- Environment ----
+export PYTHONUTF8=1
+export PYTHONIOENCODING=utf-8
+
+# ---- Run ----
+exec "$PYTHON" -m vibe_deck.cli "$@"
