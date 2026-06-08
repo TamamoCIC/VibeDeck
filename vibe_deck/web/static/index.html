@@ -703,7 +703,11 @@ async function loadTerminalList() {
 }
 
 function switchToTerminal(token, grid, name) {
-  if (token) { saveToken(token); showApp(grid, name); }
+  if (!token) return;
+  // Close old SSE before switching
+  if (window._sse) { window._sse.close(); window._sse = null; }
+  saveToken(token);
+  showApp(grid, name);
 }
 
 // ═══════════════════════════════════════════════════
@@ -727,6 +731,7 @@ function connectSSE() {
   const statusLabel = document.getElementById('statusLabel');
   const token = getToken();
   const es = new EventSource('/api/events?token=' + token);
+  window._sse = es;  // store for clean disconnect on terminal switch
   let connected = false;
 
   es.onopen = () => {
@@ -761,6 +766,7 @@ function connectSSE() {
       connected = false;
     }
     es.close();
+    window._sse = null;
     setTimeout(connectSSE, Math.min(sseRetryDelay, 30000));
     sseRetryDelay *= 2;
   };

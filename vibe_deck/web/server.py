@@ -362,9 +362,8 @@ class VibeDeckWebServer:
     async def _list_terminals(self, request: web.Request) -> web.Response:
         """List all registered terminals (no auth required — local daemon).
 
-        Returns id, name, type, grid, widget count, and — for virtual
-        terminals only — the full token so users can copy a shareable
-        connection URL.  Physical terminals never expose a token.
+        Returns id, name, type, grid, widget count, and the full token
+        for every terminal so the sidebar can switch between them.
         """
         terminals = []
         for t in self._registry.list_all():
@@ -376,11 +375,8 @@ class VibeDeckWebServer:
                 "grid": t.grid,
                 "widget_count": len(frame.widgets) if frame else 0,
                 "created_at": t.created_at,
+                "token": t.token,
             }
-            # Expose token only for virtual terminals so users can
-            # copy a connection link for their phone / other browser.
-            if t.type == "virtual":
-                entry["token"] = t.token
             terminals.append(entry)
         # Sort: default first, then by name
         terminals.sort(key=lambda t: (0 if t["id"] == "default" else 1, t["name"]))
