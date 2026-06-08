@@ -268,6 +268,15 @@ class VibeDeckSupervisor:
                 try:
                     msg = await asyncio.wait_for(q.get(), timeout=1.0)
                     await self._handle_message(msg)
+                    # Persist layout after every state change — ensures
+                    # survival across crashes, not just clean shutdowns
+                    if msg.type in (MessageType.WIDGET_STATE_UPDATE,
+                                    MessageType.AGENT_ONLINE,
+                                    MessageType.AGENT_OFFLINE):
+                        try:
+                            self._engine.autosave_all()
+                        except Exception:
+                            pass
                 except asyncio.TimeoutError:
                     continue
         except asyncio.CancelledError:
@@ -300,7 +309,7 @@ class VibeDeckSupervisor:
             ds = DisplayState(icon="🆕", color="#64748b", animation="pulse", label="Starting")
             ws = WidgetState(id=widget_id, type=WidgetType.AGENT, display=ds,
                              meta={"agent": agent_name, "pid": msg.payload.get("pid")})
-            self._engine.update_widget(ws, terminal_id)
+            self._engine.upsert_widget(ws, terminal_id)
 
         elif msg.type == MessageType.AGENT_OFFLINE:
             agent_name = msg.payload.get("agent_name", "unknown")
@@ -417,7 +426,7 @@ class VibeDeckSupervisor:
                     if _is_hook_event:
                         import time
                         ws._last_hook_ts = time.time()
-                    self._engine.update_widget(ws, tid)
+                    self._engine.upsert_widget(ws, tid)
                     log.info("[HOOK→UI] new widget %s CREATED on terminal %s", widget_id, tid)
 
         elif msg.type == MessageType.KEY_PRESSED:
@@ -438,7 +447,19 @@ class VibeDeckSupervisor:
             self._engine.remove_widget(widget_id, terminal_id)
 
         # ── Reset thinking timer + activity timestamp ──────
-        if msg.type in (MessageType.WIDGET_STATE_UPDATE, MessageType.AGENT_ONLINE):
+        # Only real hook events (those carrying hook_event_name) indicate
+        # that Claude is actively working.  Adapter heartbeats are periodic
+        # liveness checks (status="running" with no hook_event_name) and
+        # must not reset the thinking timer — otherwise on cold start the
+        # heartbeat resets it, 0.8s of silence fires it, and the widget
+        # flips to "Thinking" even though Claude may be idle.
+        _is_real_activity = False
+        if msg.type == MessageType.AGENT_ONLINE:
+            _is_real_activity = True
+        elif msg.type == MessageType.WIDGET_STATE_UPDATE:
+            _data = msg.payload.get("data", {})
+            _is_real_activity = bool(_data.get("hook_event_name", ""))
+        if _is_real_activity:
             import time as _time
             self._last_hook_activity = _time.monotonic()
             asyncio.create_task(self._reset_thinking_timer(terminal_id))
@@ -559,6 +580,13 @@ class VibeDeckSupervisor:
                 await self._adapter_manager.stop()
             except Exception:
                 log.debug("AdapterManager stop error (ignored)", exc_info=True)
+
+        # 0.5 Persist current layout state before tearing down
+        try:
+            self._engine.autosave_all()
+            log.info("Layout state autosaved on shutdown")
+        except Exception:
+            log.debug("Autosave error (ignored)", exc_info=True)
 
         # 1. Close SSE connections first (prevents aiohttp InvalidStateError on Windows)
         if hasattr(self, '_web_server'):

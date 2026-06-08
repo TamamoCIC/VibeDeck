@@ -73,9 +73,13 @@ class FileWatcher(BaseConnector):
             if f.suffix == ".json":
                 await self._handle_change(watchfiles.Change.added, f)
             elif f.suffix == ".jsonl":
-                # Mark current file size as the offset so we skip old data
+                # On cold start, read the last line to restore current state,
+                # then set offset to EOF so we only pick up new events.
                 try:
-                    self._offsets[f.name] = f.stat().st_size
+                    file_size = f.stat().st_size
+                    self._offsets[f.name] = file_size
+                    if file_size > 0:
+                        await self._restore_last_state(f)
                 except OSError:
                     self._offsets[f.name] = 0
 
@@ -231,6 +235,45 @@ class FileWatcher(BaseConnector):
 
         # Best-effort truncation in the background
         await self._truncate_jsonl(path)
+
+    async def _restore_last_state(self, path: Path) -> None:
+        """Read the last JSONL line at startup to restore current agent state.
+
+        Without this, a cold-started VibeDeck daemon has no way to know
+        what Claude Code is doing — the FileWatcher only sees *new* events
+        written after startup.  Reading the tail of the log lets us show
+        the last known state (e.g. "Idle" after a Stop, "Waiting" after
+        UserPromptSubmit, tool name after PreToolUse) instead of falling
+        through to the adapter heartbeat and the thinking-timer dead end.
+        """
+        try:
+            text = await asyncio.to_thread(path.read_text, encoding="utf-8")
+            lines = [ln for ln in text.split("\n") if ln]
+            if not lines:
+                return
+            last_line = lines[-1]
+            try:
+                data = json.loads(last_line)
+            except json.JSONDecodeError:
+                log.debug("Last JSONL line unparseable in %s; skipping", path.name)
+                return
+
+            hook_event = data.get("hook_event_name", "")
+            session_id = data.get("session_id", "")[:8]
+            log.info(
+                "[WATCHER] Cold start: restored last state → hook=%s session=%s",
+                hook_event or "(none)", session_id,
+            )
+
+            await self._publish(
+                MessageType.WIDGET_STATE_UPDATE,
+                {
+                    "agent_name": path.stem,
+                    "data": data,
+                },
+            )
+        except Exception:
+            log.debug("Failed to restore last state from %s", path, exc_info=True)
 
     async def _truncate_jsonl(
         self, path: Path, max_lines: int = MAX_JSONL_LINES
