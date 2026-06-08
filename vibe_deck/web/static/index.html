@@ -505,6 +505,9 @@
           icon: k.icon, color: k.color, animation: k.animation, label: k.label,
         });
         if (visLog.length > VIS_LOG_MAX) visLog.shift();
+        // Auto-expand on first events so user sees the timeline
+        const wrap = document.querySelector('.vis-log-wrap');
+        if (wrap && !wrap.open) wrap.open = true;
       }
       renderVisLog();
     });
@@ -562,7 +565,8 @@
     const log = document.getElementById('visLog');
     const count = document.getElementById('visLogCount');
     count.textContent = visLog.length;
-    if (!log.parentElement.open) return;  // only render when expanded
+    // Always render — low cost (30 entries max), ensures timeline
+    // is up-to-date when user expands it
     log.innerHTML = visLog.slice(-30).reverse().map(e =>
       '<div class="vis-entry">' +
         '<span class="ve-ts">' + esc(e.ts) + '</span>' +
