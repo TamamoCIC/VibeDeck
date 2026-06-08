@@ -164,7 +164,7 @@ class VibeDeckSupervisor:
             from ..render.hardware import HardwareRenderer
             self._renderer = HardwareRenderer(device_index=self._device_index)
             if self._renderer.open():
-                log.info("Hardware renderer started: %s", self._renderer.deck_type)
+                log.info("Hardware renderer started: %s (%s)", self._renderer.deck_type, self._renderer.grid_name)
                 # Hot-plug monitor
                 self._tasks.append(asyncio.create_task(self._renderer.hotplug_loop()))
             else:

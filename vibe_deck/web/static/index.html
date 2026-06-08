@@ -160,14 +160,14 @@
 
 <div class="header">
   <h1><span>🦞</span> VibeDeck Simulator</h1>
-  <p class="sub">Virtual Stream Deck — build, test, and monitor without hardware</p>
+  <p class="sub">Virtual Terminal — build, test, and monitor without hardware</p>
 </div>
 
 <div class="toolbar">
   <select id="deckType" onchange="changeDeck()">
-    <option value="Stream Deck Mini">Mini (2×3)</option>
-    <option value="Stream Deck">Standard (3×5)</option>
-    <option value="Stream Deck XL" selected>XL (4×8)</option>
+    <option value="2x3">2×3 (Mini)</option>
+    <option value="3x5">3×5 (Standard)</option>
+    <option value="4x8" selected>4×8 (XL)</option>
   </select>
   <button id="btnMode" onclick="toggleMode()" class="active">🔍 Live</button>
   <button onclick="resetDeck()">🔄 Reset</button>
@@ -195,9 +195,9 @@
 
 <script>
   const DECK_SIZES = {
-    'Stream Deck Mini': { rows: 2, cols: 3 },
-    'Stream Deck': { rows: 3, cols: 5 },
-    'Stream Deck XL': { rows: 4, cols: 8 },
+    '2x3': { rows: 2, cols: 3 },
+    '3x5': { rows: 3, cols: 5 },
+    '4x8': { rows: 4, cols: 8 },
   };
 
   const DEMO_KEY_DATA = [
@@ -209,7 +209,7 @@
     { index:29, widget_id:'info-time', type:'system', icon:'⏰', color:'#1e1e2e', animation:'none', label:'Time', badge:null },
   ];
 
-  let currentDeck = 'Stream Deck XL';
+  let currentDeck = '4x8';
   let mode = 'live';
   let sseRetryDelay = 1000;
 
@@ -371,7 +371,7 @@
           window._lastKeys = data.keys;
           updateKeys(data.keys);
           statusDot.className = 'status-dot online';
-          statusLabel.textContent = `Live · ${data.deck_type}`;
+          statusLabel.textContent = `Live · ${data.display_name || data.deck_type}`;
         }
       } catch(e) {}
     };

@@ -62,9 +62,26 @@ class HardwareRenderer:
 
     @property
     def deck_type(self) -> str:
+        """Raw Elgato model name from hardware SDK."""
         if not self._deck:
             return "unknown"
         return self._deck.deck_type()
+
+    @property
+    def grid_name(self) -> str:
+        """Grid dimensions string (e.g. '4x8' for XL)."""
+        kc = self.key_count
+        kt = self.deck_type
+        # Map known models to their grid
+        _grid_map = {
+            "Stream Deck XL": "4x8",
+            "Stream Deck": "3x5",
+            "Stream Deck Mini": "3x2",
+            "Stream Deck Neo": "2x4",
+            "Stream Deck Plus": "2x4",
+            "Stream Deck Pedal": "1x3",
+        }
+        return _grid_map.get(kt, f"{self.key_count}keys")
 
     @property
     def key_count(self) -> int:

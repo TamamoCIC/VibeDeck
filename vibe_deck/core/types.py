@@ -12,6 +12,16 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
+# Module-level mapping: Stream Deck model names → grid dimensions
+_DECK_MODEL_SIZES: dict[str, tuple[int, int]] = {
+    "Stream Deck Mini": (3, 2),
+    "Stream Deck": (3, 5),
+    "Stream Deck XL": (4, 8),
+    "Stream Deck Neo": (2, 4),
+    "Stream Deck Plus": (2, 4),
+    "Stream Deck Pedal": (1, 3),
+}
+
 
 # ── Enums ────────────────────────────────────────
 
@@ -120,18 +130,18 @@ class WidgetState(BaseModel):
 
 class LayoutFrame(BaseModel):
     """
-    Snapshot of the entire Stream Deck at one moment.
+    Snapshot of a Terminal at one moment.
 
-    Maps physical key indices to Widgets. This is the canonical
-    representation pushed to all render targets (Web Simulator
-    and Hardware driver).
+    Maps key indices to Widgets. This is the canonical
+    representation pushed to all render targets (physical
+    and virtual Terminals).
     """
 
-    deck_type: str = Field(default="Stream Deck XL", description="Human-readable device model name")
+    display_name: str = Field(default="4x8", description="Human-readable grid name (e.g. '4x8', '3x5')")
     rows: int = Field(gt=0, description="Number of key rows")
     cols: int = Field(gt=0, description="Number of key columns")
     widgets: dict[str, WidgetState] = Field(default_factory=dict, description="Widget ID → Widget State")
-    keymap: list[Optional[str]] = Field(default_factory=list, description="Physical key index → Widget ID")
+    keymap: list[Optional[str]] = Field(default_factory=list, description="Key index → Widget ID")
 
     @property
     def key_count(self) -> int:
@@ -164,23 +174,24 @@ class LayoutFrame(BaseModel):
         self.widgets.pop(widget_id, None)
 
     @classmethod
-    def for_deck(cls, deck_type: str) -> "LayoutFrame":
-        """Create an empty frame for a specific Stream Deck model."""
-        sizes = {
-            "Stream Deck Mini": (3, 2),
-            "Stream Deck": (3, 5),
-            "Stream Deck XL": (4, 8),
-            "Stream Deck Neo": (2, 4),
-            "Stream Deck Plus": (2, 4),
-            "Stream Deck Pedal": (1, 3),
-        }
-        rows, cols = sizes.get(deck_type, (3, 5))
+    def for_grid(cls, rows: int, cols: int, display_name: str | None = None) -> "LayoutFrame":
+        """Create an empty frame for a grid of given dimensions."""
+        name = display_name or f"{rows}x{cols}"
         return cls(
-            deck_type=deck_type,
+            display_name=name,
             rows=rows,
             cols=cols,
             keymap=[None] * (rows * cols),
         )
+
+    @classmethod
+    def for_deck(cls, deck_type: str) -> "LayoutFrame":
+        """Create an empty frame for a specific Stream Deck model (legacy).
+
+        Prefer for_grid() for new code. This is retained for hardware auto-detection.
+        """
+        rows, cols = _DECK_MODEL_SIZES.get(deck_type, (3, 5))
+        return cls.for_grid(rows, cols, display_name=deck_type)
 
     def to_yaml(self, path: str) -> None:
         """Write the frame to a YAML layout file."""
@@ -205,38 +216,34 @@ class LayoutFrame(BaseModel):
 
         d = {
             "name": "untitled",
-            "deck_type": self.deck_type,
+            "display_name": self.display_name,
             "rows": self.rows,
             "cols": self.cols,
             "widgets": widgets_raw,
         }
 
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             yaml.safe_dump(d, f, default_flow_style=False, allow_unicode=True, indent=2)
 
     @classmethod
     def from_yaml(cls, path: str) -> "LayoutFrame":
-        """Load a LayoutFrame from a YAML layout file."""
+        """Load a LayoutFrame from a YAML layout file.
+
+        Supports both legacy format (deck_type) and new format (display_name + rows + cols).
+        """
         import yaml
 
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             raw = yaml.safe_load(f)
 
-        deck_type = raw.get("deck_type", "Stream Deck XL")
+        # Handle legacy format: deck_type used to imply grid dimensions
+        display_name = raw.get("display_name") or raw.get("deck_type", "4x8")
         rows, cols = raw.get("rows"), raw.get("cols")
         if rows is None or cols is None:
-            sizes = {
-                "Stream Deck Mini": (3, 2),
-                "Stream Deck": (3, 5),
-                "Stream Deck XL": (4, 8),
-                "Stream Deck Neo": (2, 4),
-                "Stream Deck Plus": (2, 4),
-                "Stream Deck Pedal": (1, 3),
-            }
-            rows, cols = sizes.get(deck_type, (3, 5))
+            rows, cols = _DECK_MODEL_SIZES.get(display_name, (3, 5))
 
         frame = cls(
-            deck_type=deck_type,
+            display_name=display_name,
             rows=rows,
             cols=cols,
             keymap=[None] * (rows * cols),
@@ -263,7 +270,7 @@ class LayoutFrame(BaseModel):
 
     model_config = {"json_schema_extra": {
         "examples": [{
-            "deck_type": "Stream Deck XL",
+            "display_name": "4x8",
             "rows": 4,
             "cols": 8,
             "widgets": {},

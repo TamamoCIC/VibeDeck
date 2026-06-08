@@ -109,28 +109,40 @@ class TestWidgetState:
 
 
 class TestLayoutFrame:
-    def test_for_deck(self):
-        frame = LayoutFrame.for_deck("Stream Deck XL")
-        assert frame.deck_type == "Stream Deck XL"
+    def test_for_grid(self):
+        frame = LayoutFrame.for_grid(4, 8, "4x8")
+        assert frame.display_name == "4x8"
         assert frame.rows == 4
         assert frame.cols == 8
         assert len(frame.keymap) == 32
 
-    def test_for_deck_mini(self):
-        frame = LayoutFrame.for_deck("Stream Deck Mini")
+    def test_for_grid_mini(self):
+        frame = LayoutFrame.for_grid(3, 2, "3x2")
         assert frame.rows == 3
         assert frame.cols == 2
         assert len(frame.keymap) == 6
 
+    def test_for_deck_legacy(self):
+        """Legacy for_deck still works via for_grid."""
+        frame = LayoutFrame.for_deck("Stream Deck XL")
+        assert frame.display_name == "Stream Deck XL"
+        assert frame.rows == 4
+        assert frame.cols == 8
+
+    def test_for_grid_default_name(self):
+        """for_grid auto-generates display_name if omitted."""
+        frame = LayoutFrame.for_grid(3, 5)
+        assert frame.display_name == "3x5"
+
     def test_place_widget(self):
-        frame = LayoutFrame.for_deck("Stream Deck")
+        frame = LayoutFrame.for_grid(3, 5, "3x5")
         ws = WidgetState(id="test-1", type=WidgetType.AGENT)
         frame.place_widget(ws, 3)
         assert frame.keymap[3] == "test-1"
         assert frame.widgets["test-1"] == ws
 
     def test_place_widget_moves_existing(self):
-        frame = LayoutFrame.for_deck("Stream Deck")
+        frame = LayoutFrame.for_grid(3, 5, "3x5")
         ws = WidgetState(id="test-1")
         frame.place_widget(ws, 2)
         frame.place_widget(ws, 5)
@@ -138,7 +150,7 @@ class TestLayoutFrame:
         assert frame.keymap[5] == "test-1"
 
     def test_remove_widget(self):
-        frame = LayoutFrame.for_deck("Stream Deck")
+        frame = LayoutFrame.for_grid(3, 5, "3x5")
         ws = WidgetState(id="test-1")
         frame.place_widget(ws, 3)
         frame.remove_widget("test-1")
@@ -146,7 +158,7 @@ class TestLayoutFrame:
         assert "test-1" not in frame.widgets
 
     def test_get_widget_at(self):
-        frame = LayoutFrame.for_deck("Stream Deck")
+        frame = LayoutFrame.for_grid(3, 5, "3x5")
         ws = WidgetState(id="test-1")
         frame.place_widget(ws, 3)
         assert frame.get_widget_at(3) == ws
@@ -155,7 +167,7 @@ class TestLayoutFrame:
 
     def test_yaml_roundtrip(self):
         """LayoutFrame survives YAML round-trip."""
-        frame = LayoutFrame.for_deck("Stream Deck XL")
+        frame = LayoutFrame.for_grid(4, 8, "4x8")
         ws = WidgetState(
             id="agent-1",
             type=WidgetType.AGENT,
@@ -168,7 +180,7 @@ class TestLayoutFrame:
             frame.to_yaml(f.name)
 
         loaded = LayoutFrame.from_yaml(f.name)
-        assert loaded.deck_type == frame.deck_type
+        assert loaded.display_name == frame.display_name
         assert loaded.rows == frame.rows
         assert loaded.cols == frame.cols
         assert loaded.keymap[0] == "agent-1"
@@ -176,23 +188,42 @@ class TestLayoutFrame:
 
         Path(f.name).unlink()
 
+    def test_yaml_roundtrip_legacy(self):
+        """Legacy YAML with deck_type still loads correctly."""
+        import yaml
+        legacy = {
+            "name": "legacy-layout",
+            "deck_type": "Stream Deck XL",
+            "rows": 4,
+            "cols": 8,
+            "widgets": [],
+        }
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            yaml.safe_dump(legacy, f)
+            f.flush()
+            loaded = LayoutFrame.from_yaml(f.name)
+            assert loaded.display_name == "Stream Deck XL"  # migrated from deck_type
+            assert loaded.rows == 4
+            assert loaded.cols == 8
+        Path(f.name).unlink()
+
     def test_json_roundtrip(self):
         """LayoutFrame serializes to/from JSON correctly."""
-        frame = LayoutFrame.for_deck("Stream Deck")
+        frame = LayoutFrame.for_grid(3, 5, "3x5")
         ws = WidgetState(id="test-1", display=DisplayState(icon="🦊"))
         frame.place_widget(ws, 0)
 
         data = frame.model_dump()
         frame2 = LayoutFrame.model_validate(data)
-        assert frame2.deck_type == frame.deck_type
+        assert frame2.display_name == frame.display_name
         assert frame2.keymap[0] == "test-1"
         assert frame2.widgets["test-1"].display.icon == "🦊"
 
     def test_key_count_property(self):
-        frame = LayoutFrame.for_deck("Stream Deck XL")
+        frame = LayoutFrame.for_grid(4, 8, "4x8")
         assert frame.key_count == 32
 
-        frame2 = LayoutFrame.for_deck("Stream Deck Mini")
+        frame2 = LayoutFrame.for_grid(3, 2, "3x2")
         assert frame2.key_count == 6
 
 

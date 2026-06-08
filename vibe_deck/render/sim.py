@@ -44,14 +44,24 @@ ICON_COLORS: dict[str, str] = {
     "🆕": "#22C55E",
 }
 
-# Key size presets
+# Key size presets — maps grid dimensions to pixel size per key
 KEY_SIZES: dict[str, tuple[int, int]] = {
-    "Stream Deck XL": (96, 96),
-    "Stream Deck": (72, 72),
-    "Stream Deck Mini": (80, 80),
-    "Stream Deck Neo": (80, 80),
-    "Stream Deck Plus": (100, 100),
-    "Stream Deck Pedal": (96, 96),
+    "4x8": (96, 96),      # Stream Deck XL
+    "3x5": (72, 72),      # Stream Deck Standard
+    "3x2": (80, 80),      # Stream Deck Mini
+    "2x4": (80, 80),      # Stream Deck Neo / Plus
+    "3x4": (100, 100),    # Phone sparse
+    "1x3": (96, 96),      # Stream Deck Pedal
+}
+
+# Legacy mapping for Stream Deck model names → grid
+_DECK_MODEL_TO_GRID: dict[str, tuple[str, int, int]] = {
+    "Stream Deck XL": ("4x8", 4, 8),
+    "Stream Deck": ("3x5", 3, 5),
+    "Stream Deck Mini": ("3x2", 3, 2),
+    "Stream Deck Neo": ("2x4", 2, 4),
+    "Stream Deck Plus": ("2x4", 2, 4),
+    "Stream Deck Pedal": ("1x3", 1, 3),
 }
 
 
@@ -91,9 +101,12 @@ class SimRenderer:
     - Animation hint encoded in metadata (animated by CSS in browser)
     """
 
-    def __init__(self, deck_type: str = "Stream Deck XL") -> None:
-        self.deck_type = deck_type
-        self.key_size = KEY_SIZES.get(deck_type, (72, 72))
+    def __init__(self, rows: int = 4, cols: int = 8, display_name: str = "4x8") -> None:
+        self.display_name = display_name
+        self.rows = rows
+        self.cols = cols
+        grid_key = f"{rows}x{cols}"
+        self.key_size = KEY_SIZES.get(grid_key, (72, 72))
 
     def render_key(self, state: DisplayState, pressed: bool = False) -> bytes:
         """

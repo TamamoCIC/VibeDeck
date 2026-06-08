@@ -22,8 +22,8 @@ class LayoutEngine:
     frame, and publishes it for Render targets.
     """
 
-    def __init__(self, deck_type: str = "Stream Deck XL") -> None:
-        self._frame = LayoutFrame.for_deck(deck_type)
+    def __init__(self, display_name: str = "4x8", rows: int = 4, cols: int = 8) -> None:
+        self._frame = LayoutFrame.for_grid(rows, cols, display_name)
         self._layout_name: str | None = None
 
     @property

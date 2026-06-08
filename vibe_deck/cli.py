@@ -154,7 +154,7 @@ def _config_parser(sub):
 
 
 def _info_parser(sub):
-    sub.add_parser("info", help="Show connected Stream Deck device info")
+    sub.add_parser("info", help="Show connected Terminal device info")
 
 
 def _mcp_parser(sub):

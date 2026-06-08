@@ -26,8 +26,8 @@ class MessageType(Enum):
     APPROVAL_REQUESTED = auto()    # Agent needs user approval
     APPROVAL_RESOLVED = auto()     # Approval answered
     KEY_PRESSED = auto()           # Physical/simulated key press
-    DECK_CONNECTED = auto()        # Stream Deck hardware attached
-    DECK_DISCONNECTED = auto()     # Stream Deck hardware detached
+    TERMINAL_CONNECTED = auto()    # A Terminal (physical or virtual) connected
+    TERMINAL_DISCONNECTED = auto() # A Terminal disconnected
     SYSTEM_EVENT = auto()          # Generic system event
 
 

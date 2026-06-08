@@ -73,10 +73,11 @@ class VibeDeckWebServer:
             return
 
         from ..render.sim import SimRenderer
-        renderer = SimRenderer(self._engine.frame.deck_type)
-        keys = renderer.render_frame(self._engine.frame)
+        frame = self._engine.frame
+        renderer = SimRenderer(frame.rows, frame.cols, frame.display_name)
+        keys = renderer.render_frame(frame)
 
-        data = json.dumps({"type": "frame", "keys": keys, "deck_type": self._engine.frame.deck_type})
+        data = json.dumps({"type": "frame", "keys": keys, "display_name": frame.display_name})
 
         dead: list[web.StreamResponse] = []
         for resp in self._clients:
@@ -100,12 +101,13 @@ class VibeDeckWebServer:
     async def _get_frame(self, request: web.Request) -> web.Response:
         """Return the current LayoutFrame as JSON."""
         from ..render.sim import SimRenderer
-        renderer = SimRenderer(self._engine.frame.deck_type)
-        keys = renderer.render_frame(self._engine.frame)
+        frame = self._engine.frame
+        renderer = SimRenderer(frame.rows, frame.cols, frame.display_name)
+        keys = renderer.render_frame(frame)
         return web.json_response({
-            "deck_type": self._engine.frame.deck_type,
-            "rows": self._engine.frame.rows,
-            "cols": self._engine.frame.cols,
+            "display_name": frame.display_name,
+            "rows": frame.rows,
+            "cols": frame.cols,
             "keys": keys,
         })
 

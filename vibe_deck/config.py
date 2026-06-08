@@ -117,7 +117,7 @@ def load_config(path: Path | None = None) -> VibeDeckConfig:
         save_config(default, config_path)
         return default
 
-    with open(config_path) as f:
+    with open(config_path, encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}
 
     return VibeDeckConfig.from_dict(raw)
@@ -149,5 +149,5 @@ def save_config(config: VibeDeckConfig, path: Path | None = None) -> None:
         ],
     }
 
-    with open(config_path, "w") as f:
+    with open(config_path, "w", encoding="utf-8") as f:
         yaml.safe_dump(d, f, default_flow_style=False, allow_unicode=True, indent=2)
