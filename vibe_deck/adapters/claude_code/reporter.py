@@ -26,6 +26,23 @@ from pathlib import Path
 MAX_LINES = 1000
 DEFAULT_VIBEDECK_HOME = Path.home() / ".vibe-deck"
 
+# Lone surrogates (\udc00-\udfff) can appear in Claude's JSON output but
+# are not valid Unicode and cannot be encoded to UTF-8.  Replace them with
+# U+FFFD (replacement character) so the JSONL write never fails.
+_SURR_REPL = "\\ufffd"
+
+
+def _sanitize_surrogates(s: str) -> str:
+    """Replace lone surrogates in `s` with \\ufffd."""
+    out: list[str] = []
+    for ch in s:
+        cp = ord(ch)
+        if 0xDC00 <= cp <= 0xDFFF:
+            out.append(_SURR_REPL)
+        else:
+            out.append(ch)
+    return "".join(out)
+
 
 def _vibedeck_home() -> Path:
     """Resolve VibeDeck data directory."""
@@ -57,8 +74,20 @@ def main() -> None:
     event["_vibedeck_ts"] = datetime.now(timezone.utc).isoformat()
     event["_vibedeck_source"] = "claude-code-hook"
 
-    # Use compact JSON for one-line-per-event
-    line = json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n"
+    # Debug logging to stderr (visible in Claude Code hook output)
+    hook_event = event.get("hook_event_name", "?")
+    tool_name = event.get("tool_name", "")
+    session_id = event.get("session_id", "")[:8]
+    msg = f"[VibeDeck] {hook_event}"
+    if tool_name:
+        msg += f" tool={tool_name}"
+    print(f"{msg} sid={session_id}", file=sys.stderr, flush=True)
+
+    # Use compact JSON for one-line-per-event.
+    # Sanitize lone surrogates that Claude's output may contain — these are
+    # valid in JSON strings but cannot be encoded to UTF-8.
+    line = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
+    line = _sanitize_surrogates(line) + "\n"
 
     try:
         with open(_output_file(), "a", encoding="utf-8") as f:

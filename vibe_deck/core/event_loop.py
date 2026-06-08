@@ -111,7 +111,7 @@ class VibeDeckSupervisor:
         # 1. Start Web Server (first so we can show status early)
         from ..web.server import VibeDeckWebServer
         self._web_server = VibeDeckWebServer(
-            self._engine, self._registry, port=self._port, expose=self._expose
+            self._engine, self._registry, port=self._port, expose=self._expose, bus=self._bus
         )
         await self._web_server.start()
 
@@ -161,49 +161,34 @@ class VibeDeckSupervisor:
     # ── Internals ──────────────────────────────────
 
     def _setup_demo_widgets(self) -> None:
-        """Populate sample widgets so the simulator isn't empty."""
+        """Populate Claude Code widget on all registered terminals.
+
+        Only creates the Claude Code agent widget at key 0 so the
+        Stream Deck / phone simulator shows live hook-driven status:
+          SessionStart       → 🐙 green crawl  "Running"
+          UserPromptSubmit   → 🐙 yellow blink "Waiting"
+          PreToolUse         → 🐙 green crawl  tool name
+          PostToolUse        → 🐙 green crawl  tool name
+          Stop               → 🐙 dim green    "Idle"
+        """
         from .types import DisplayState, WidgetState, WidgetType
 
-        demos = [
-            ("claude-code-main", "🐙", "#22c55e", "crawl", "Running", WidgetType.AGENT,
-             {"agent": "Claude Code", "status": "running"}),
-            ("opencode-main", "🦊", "#22c55e", "crawl", "Busy", WidgetType.AGENT,
-             {"agent": "OpenCode", "status": "busy"}),
-            ("openclaw-main", "🦞", "#166534", "none", "Idle", WidgetType.AGENT,
-             {"agent": "OpenClaw", "status": "completed"}),
-            ("telegram-main", "💬", "#6366f1", "pulse", "3 new", WidgetType.AGENT,
-             {"agent": "Telegram", "status": "unread", "unread": 3}),
-        ]
+        for terminal_id in self._engine.list_terminals():
+            frame = self._engine.get_frame(terminal_id)
+            if frame is None:
+                continue
 
-        for i, (wid, icon, color, anim, label, wtype, meta) in enumerate(demos):
-            badge_val = str(meta["unread"]) if meta.get("unread") else None
             ws = WidgetState(
-                id=wid,
-                type=wtype,
-                display=DisplayState(icon=icon, color=color, animation=anim, label=label, badge=badge_val),
-                meta=meta,
+                id="claude-code-auto",
+                type=WidgetType.AGENT,
+                display=DisplayState(icon="🐙", color="#22c55e", animation="crawl", label="Running"),
+                meta={"agent": "Claude Code", "status": "running"},
             )
-            self._engine.frame.place_widget(ws, i)
+            frame.place_widget(ws, 0)
+            log.debug("Claude Code widget placed at key 0 on terminal %s (grid=%dx%d)",
+                      terminal_id, frame.rows, frame.cols)
 
-        # Add a command widget
-        cmd = WidgetState(
-            id="shortcut-terminal",
-            type=WidgetType.COMMAND,
-            display=DisplayState(icon="🖥️", color="#1e293b", animation="none", label="Terminal"),
-            meta={"command": "gnome-terminal"},
-        )
-        self._engine.frame.place_widget(cmd, 28)
-
-        # Add info widget
-        info = WidgetState(
-            id="info-time",
-            type=WidgetType.SYSTEM,
-            display=DisplayState(icon="⏰", color="#1e1e2e", animation="none", label="Time"),
-            meta={"source": "system:clock"},
-        )
-        self._engine.frame.place_widget(info, 29)
-
-        log.info("Demo mode: 6 sample widgets loaded")
+        log.info("Claude Code widget ready on %d terminal(s)", len(self._engine.list_terminals()))
 
     async def _start_connectors(self) -> None:
         """Start process scanner and file watcher."""
@@ -322,6 +307,12 @@ class VibeDeckSupervisor:
             data = msg.payload.get("data", {})
             widget_id = msg.payload.get("widget_id", f"{agent_name}-auto")
 
+            _hook_event = data.get("hook_event_name", "")
+            _tool_name = data.get("tool_name", "")
+            _status = data.get("status", "")
+            log.info("[HOOK→UI] agent=%s widget=%s hook_event=%s tool=%s status=%s",
+                     agent_name, widget_id, _hook_event, _tool_name, _status)
+
             # Use display from adapter if provided, else resolve from event data
             display_raw = msg.payload.get("display")
             if display_raw:
@@ -332,31 +323,66 @@ class VibeDeckSupervisor:
             else:
                 ds = self._resolve_display(agent_name, data, DISPLAY_MAP)
 
+            # Don't let adapter heartbeats overwrite hook-driven fine-grained status.
+            # If the last update was from a hook event and the adapter pushes a generic
+            # "running" status, keep the hook-driven display for a grace period.
+            _is_hook_event = bool(_hook_event)
+            _is_adapter_heartbeat = bool(not _hook_event and _status == "running")
+
             # Apply tool name to label for PreToolUse / PostToolUse events
-            hook_event = data.get("hook_event_name", "")
-            tool_name = data.get("tool_name", "")
-            if hook_event in ("PreToolUse", "PostToolUse") and tool_name:
-                ds.label = tool_name[:12]  # max 12 chars
+            if _hook_event in ("PreToolUse", "PostToolUse") and _tool_name:
+                ds.label = _tool_name[:12]  # max 12 chars
+                log.info("[HOOK→UI] label override → %s", ds.label)
 
             # Apply session status label from hook events that carry it
-            if hook_event == "Stop" and data.get("stop_hook_active"):
+            if _hook_event == "Stop" and data.get("stop_hook_active"):
                 ds.label = "Paused"
 
-            frame = self._engine.get_frame(terminal_id)
-            if frame:
+            log.info("[HOOK→UI] display resolved → icon=%s color=%s anim=%s label=%s",
+                     ds.icon, ds.color, ds.animation, ds.label)
+
+            # Update widget on ALL registered terminals so every connected
+            # device/phone sees the same state, regardless of which terminal
+            # the user is viewing.
+            for tid in self._engine.list_terminals():
+                frame = self._engine.get_frame(tid)
+                if frame is None:
+                    continue
                 existing = frame.widgets.get(widget_id)
                 if existing:
+                    # Skip adapter heartbeat if widget already has hook-driven state
+                    if _is_adapter_heartbeat and hasattr(existing, '_last_hook_ts'):
+                        import time
+                        if time.time() - existing._last_hook_ts < 5.0:
+                            log.debug("[HOOK→UI] skipping heartbeat for %s (hook state is fresh)", widget_id)
+                            continue
                     existing.display = ds
                     existing.meta.update(data)
+                    if _is_hook_event:
+                        import time
+                        existing._last_hook_ts = time.time()
+                    log.debug("[HOOK→UI] widget %s UPDATED on terminal %s", widget_id, tid)
                 else:
                     if "badge" in data:
                         ds.badge = str(data["badge"])
                     ws = WidgetState(id=widget_id, type=WidgetType.AGENT, display=ds, meta=data)
-                    self._engine.update_widget(ws, terminal_id)
+                    if _is_hook_event:
+                        import time
+                        ws._last_hook_ts = time.time()
+                    self._engine.update_widget(ws, tid)
+                    log.info("[HOOK→UI] new widget %s CREATED on terminal %s", widget_id, tid)
 
         elif msg.type == MessageType.KEY_PRESSED:
             key = msg.payload.get("key", -1)
-            log.debug("Key %d pressed on terminal %r", key, terminal_id)
+            log.info("[KEY] Key %d pressed on terminal %r", key, terminal_id)
+            frame = self._engine.get_frame(terminal_id)
+            if frame:
+                ws = frame.widget_at_key(key)
+                if ws:
+                    log.info("[KEY] Widget %s at key %d — current state: icon=%s label=%s",
+                             ws.id, key, ws.display.icon, ws.display.label)
+                else:
+                    log.info("[KEY] No widget at key %d on terminal %r", key, terminal_id)
 
         elif msg.type == MessageType.WIDGET_REMOVED:
             agent_name = msg.payload.get("agent_name", "unknown")

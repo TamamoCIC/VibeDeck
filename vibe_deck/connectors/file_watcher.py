@@ -27,7 +27,6 @@ from .base import BaseConnector
 log = logging.getLogger("vibe_deck.connectors.file_watcher")
 
 MAX_JSONL_LINES = 1000
-JSONL_TAIL_BYTES = 8192  # Read last 8KB to find the last complete line
 
 try:
     import watchfiles
@@ -43,13 +42,18 @@ class FileWatcher(BaseConnector):
 
     Each file in ~/.vibe-deck/agents/ represents one agent's status.
     - .json  files: whole-file read → JSON parse → publish
-    - .jsonl files: tail-read last line → JSON parse → publish, then truncate
+    - .jsonl files: incremental read from last offset → publish each new line
+
+    JSONL offset tracking ensures that brief states (e.g. UserPromptSubmit →
+    Waiting) are visible even when multiple events arrive in the same watchfiles
+    batch.
     """
 
     def __init__(self, bus: MessageBus, watch_dir: Path | None = None) -> None:
         super().__init__("file-watcher", bus)
         self._watch_dir = watch_dir or AGENTS_DIR
         self._task: asyncio.Task | None = None
+        self._offsets: dict[str, int] = {}  # path stem → last read byte offset
 
     async def start(self) -> None:
         """Start watching the agents directory."""
@@ -62,10 +66,18 @@ class FileWatcher(BaseConnector):
             return
         self._watch_dir.mkdir(parents=True, exist_ok=True)
 
-        # Scan existing status files at startup
+        # Scan existing status files at startup — start from current EOF
+        # so we only pick up new events going forward (avoids replaying
+        # historical events on daemon restart).
         for f in sorted(self._watch_dir.glob("*")):
-            if f.suffix in (".json", ".jsonl"):
+            if f.suffix == ".json":
                 await self._handle_change(watchfiles.Change.added, f)
+            elif f.suffix == ".jsonl":
+                # Mark current file size as the offset so we skip old data
+                try:
+                    self._offsets[f.name] = f.stat().st_size
+                except OSError:
+                    self._offsets[f.name] = 0
 
         self._task = asyncio.create_task(self._watch_loop())
         log.info("File watcher started (dir=%s)", self._watch_dir)
@@ -134,7 +146,11 @@ class FileWatcher(BaseConnector):
     ) -> None:
         """Process an append-only JSONL event stream.
 
-        Reads only the last line (most recent event) to minimise I/O.
+        Reads ALL new lines since the last known offset, and publishes
+        each one in order. This preserves brief transient states (e.g.
+        UserPromptSubmit → Waiting) that would otherwise be lost when
+        multiple events arrive in the same watchfiles batch.
+
         After reading, truncates the file if it exceeds MAX_JSONL_LINES.
         """
         if change_type == watchfiles.Change.deleted:
@@ -142,6 +158,7 @@ class FileWatcher(BaseConnector):
                 MessageType.WIDGET_REMOVED,
                 {"agent_name": path.stem},
             )
+            self._offsets.pop(path.name, None)
             return
 
         if change_type not in (watchfiles.Change.added, watchfiles.Change.modified):
@@ -152,29 +169,63 @@ class FileWatcher(BaseConnector):
             if file_size == 0:
                 return
 
-            # Read only the tail of the file to find the last complete line
-            read_start = max(0, file_size - JSONL_TAIL_BYTES)
-            tail_bytes = path.read_bytes()[read_start:]
-            tail_text = tail_bytes.decode("utf-8")
-            lines = [ln for ln in tail_text.strip().split("\n") if ln]
+            last_offset = self._offsets.get(path.name, 0)
 
-            if not lines:
+            # If the file shrank (truncation by another process), reset offset
+            if file_size < last_offset:
+                log.debug("%s shrunk; resetting offset (was %d, now %d)",
+                          path.name, last_offset, file_size)
+                last_offset = 0
+
+            # Nothing new to read
+            if file_size == last_offset:
                 return
 
-            last_line = lines[-1]
-            try:
-                data = json.loads(last_line)
-            except json.JSONDecodeError:
-                log.debug("Unparseable JSONL tail line in %s", path)
-                return
-
-            await self._publish(
-                MessageType.WIDGET_STATE_UPDATE,
-                {
-                    "agent_name": path.stem,
-                    "data": data,
-                },
+            # Read only the new bytes since last offset
+            new_bytes = await asyncio.to_thread(
+                _read_range, path, last_offset, file_size - last_offset
             )
+            new_text = new_bytes.decode("utf-8")
+            new_lines = [ln for ln in new_text.split("\n") if ln]
+
+            if not new_lines:
+                self._offsets[path.name] = file_size
+                return
+
+            # Publish each new line in order so every state transition
+            # (including brief ones like UserPromptSubmit → Waiting) is
+            # pushed to the UI for at least one frame.
+            published = 0
+            for line in new_lines:
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    log.debug("Unparseable JSONL line in %s: %.80s", path, line[:80])
+                    continue
+
+                hook_event = data.get("hook_event_name", "")
+                tool_name = data.get("tool_name", "")
+                session_id = data.get("session_id", "")[:8]
+                log.info(
+                    "[WATCHER] %s → hook=%s tool=%s session=%s",
+                    path.name, hook_event, tool_name, session_id,
+                )
+
+                await self._publish(
+                    MessageType.WIDGET_STATE_UPDATE,
+                    {
+                        "agent_name": path.stem,
+                        "data": data,
+                    },
+                )
+                published += 1
+
+            # Update offset to current EOF
+            self._offsets[path.name] = path.stat().st_size
+
+            if published > 1:
+                log.info("[WATCHER] %s: %d events published (batched)", path.name, published)
+
         except Exception:
             log.exception("Error handling JSONL file change: %s", path)
 
@@ -201,3 +252,14 @@ class FileWatcher(BaseConnector):
             log.debug("Truncated %s: %d → %d lines", path.name, len(lines), max_lines)
         except Exception:
             log.debug("Failed to truncate %s", path, exc_info=True)
+
+
+def _read_range(path: Path, offset: int, length: int) -> bytes:
+    """Read `length` bytes starting at `offset` from `path`.
+
+    Extracted as a module-level function so it can be called via
+    asyncio.to_thread without capturing `self`.
+    """
+    with open(path, "rb") as f:
+        f.seek(offset)
+        return f.read(length)

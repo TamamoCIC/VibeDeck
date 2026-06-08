@@ -50,9 +50,11 @@ class VibeDeckWebServer:
         registry: TerminalRegistry,
         port: int = 9734,
         expose: bool = False,
+        bus=None,
     ) -> None:
         self._engine = layout_engine
         self._registry = registry
+        self._bus = bus
         self._port = port
         self._expose = expose
         self._app = web.Application()
@@ -249,8 +251,40 @@ class VibeDeckWebServer:
             return web.json_response({"error": "invalid or missing token"}, status=401)
 
         index = int(request.match_info["index"])
-        log.debug("Key %d pressed on terminal %r", index, terminal_id)
-        return web.json_response({"status": "ok", "key": index, "terminal_id": terminal_id})
+        log.info("Key %d pressed on terminal %r", index, terminal_id)
+
+        # Publish to MessageBus so the supervisor can react
+        if self._bus:
+            from ..core.message_bus import Message, MessageType
+            try:
+                frame = self._engine.get_frame(terminal_id)
+                widgets = list(frame.widgets.keys()) if frame else []
+                widget_at_key = None
+                for wid, ws in (frame.widgets.items() if frame else {}):
+                    if ws.key_index == index:
+                        widget_at_key = ws.id
+                        break
+
+                import asyncio
+                asyncio.create_task(
+                    self._bus.publish(Message(
+                        type=MessageType.KEY_PRESSED,
+                        source="web-server",
+                        payload={
+                            "terminal_id": terminal_id,
+                            "key": index,
+                            "widgets_at_key": widget_at_key or "none",
+                        },
+                    ))
+                )
+            except Exception:
+                log.debug("Failed to publish key press", exc_info=True)
+
+        return web.json_response({
+            "status": "ok",
+            "key": index,
+            "terminal_id": terminal_id,
+        })
 
     async def _terminal_status(self, request: web.Request) -> web.Response:
         """Check if a token is registered. Returns terminal info or 404."""

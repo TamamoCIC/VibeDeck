@@ -559,7 +559,7 @@ def _cmd_setup_claude_code(args):
         template = _json.loads(template_path.read_text(encoding="utf-8"))
         raw = _json.dumps(template, indent=2, ensure_ascii=False)
         # Replace placeholder with actual path
-        raw = raw.replace("{{REPORTER_PATH}}", str(Path(reporter_path).resolve()).replace("\\", "\\\\"))
+        raw = raw.replace("{{REPORTER_PATH}}", str(Path(reporter_path).resolve()).replace("\\", "/"))
         hooks_dst.write_text(raw, encoding="utf-8")
         print(f"🔧 Hooks config:   {hooks_dst}")
     else:
