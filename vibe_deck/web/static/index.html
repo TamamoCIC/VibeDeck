@@ -264,6 +264,26 @@
     display: inline-block; width: 14px; height: 14px; border-radius: 3px;
     vertical-align: middle; margin-right: 4px; border: 1px solid var(--border);
   }
+
+  /* Visual timeline */
+  .vis-log-wrap { margin-top: 8px; text-align: left; max-width: 600px; margin-inline: auto; }
+  .vis-log-summary { font-size: 0.72rem; color: var(--text-dim); cursor: pointer; padding: 4px 8px; border-radius: 4px; }
+  .vis-log-summary:hover { background: var(--surface); }
+  .vis-log { max-height: 300px; overflow-y: auto; margin-top: 4px; }
+  .vis-entry {
+    display: grid; grid-template-columns: 52px auto 56px 100px;
+    gap: 8px; align-items: center; padding: 3px 6px;
+    font-size: 0.68rem; border-bottom: 1px solid rgba(255,255,255,0.03);
+    font-family: 'SF Mono','Cascadia Code','Consolas',monospace;
+  }
+  .vis-entry .ve-ts { color: var(--text-dim); }
+  .vis-entry .ve-icon { font-size: 1rem; text-align: center; }
+  .vis-entry .ve-event { color: var(--text); }
+  .vis-entry .ve-label { color: var(--text-dim); }
+  .vis-entry .ve-swatch {
+    display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+    vertical-align: middle; margin-right: 3px;
+  }
 </style>
 </head>
 <body>
@@ -306,6 +326,10 @@
 
 <div class="footer">
   <p class="log" id="log">Click a key to simulate press</p>
+  <details class="vis-log-wrap">
+    <summary class="vis-log-summary">📋 Visual Timeline (<span id="visLogCount">0</span> events)</summary>
+    <div class="vis-log" id="visLog"></div>
+  </details>
   <p class="shortcuts">Keys <kbd>0</kbd>-<kbd>9</kbd> simulate key presses &nbsp;|&nbsp; <kbd>R</kbd> reset &nbsp;|&nbsp; <kbd>M</kbd> toggle mode</p>
 </div>
 
@@ -456,6 +480,9 @@
     }
   }
 
+  const visLog = [];  // visual timeline entries
+  const VIS_LOG_MAX = 60;
+
   function updateKeys(keys) {
     const grid = document.getElementById('deck');
     // Remove empty-state if present
@@ -463,6 +490,24 @@
     if (emptyState && keys.some(k => k.widget_id)) {
       emptyState.remove();
     }
+
+    // Record state changes to visual timeline
+    const now = new Date();
+    const ts = now.toTimeString().slice(0,8) + '.' + String(now.getMilliseconds()).padStart(3,'0');
+
+    keys.forEach(k => {
+      if (!k.widget_id) return;
+      const prev = window._lastKeys ? window._lastKeys.find(p => p.index === k.index) : null;
+      const changed = !prev || prev.label !== k.label || prev.color !== k.color || prev.animation !== k.animation || prev.icon !== k.icon;
+      if (changed) {
+        visLog.push({
+          ts, index: k.index, widget_id: k.widget_id,
+          icon: k.icon, color: k.color, animation: k.animation, label: k.label,
+        });
+        if (visLog.length > VIS_LOG_MAX) visLog.shift();
+      }
+      renderVisLog();
+    });
 
     keys.forEach(k => {
       const keyEl = grid.querySelector(`.key[data-index="${k.index}"]`);
@@ -511,6 +556,21 @@
         keyEl.classList.add(k.animation);
       }
     });
+  }
+
+  function renderVisLog() {
+    const log = document.getElementById('visLog');
+    const count = document.getElementById('visLogCount');
+    count.textContent = visLog.length;
+    if (!log.parentElement.open) return;  // only render when expanded
+    log.innerHTML = visLog.slice(-30).reverse().map(e =>
+      '<div class="vis-entry">' +
+        '<span class="ve-ts">' + esc(e.ts) + '</span>' +
+        '<span class="ve-icon">' + esc(e.icon) + '</span>' +
+        '<span class="ve-event"><span class="vis-swatch" style="background:' + esc(e.color) + '"></span>' + esc(e.label) + ' <span style="color:#555">' + esc(e.animation) + '</span></span>' +
+        '<span class="ve-label">' + esc(e.widget_id) + '</span>' +
+      '</div>'
+    ).join('');
   }
 
   function pressKey(i) {
@@ -787,6 +847,12 @@
   }, 1500);
 
   document.getElementById('log').textContent = 'Ready — click a key or press 0-9';
+
+  // ── Visual timeline toggle ─────────────────────
+
+  document.querySelector('.vis-log-wrap').addEventListener('toggle', () => {
+    renderVisLog();
+  });
 
   // ── Modal helpers ──────────────────────────────
 
