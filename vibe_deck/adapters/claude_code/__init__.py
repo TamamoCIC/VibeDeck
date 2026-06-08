@@ -168,17 +168,17 @@ class ClaudeCodeAdapter:
     def as_widget_state(self) -> WidgetState:
         """Produce a WidgetState with the current status.
 
-        Widget IDs are PID-based so that multiple Claude Code instances
-        each get their own widget (e.g. ``claude-code-12345`` instead of
-        the old colliding ``claude-code-auto``).
+        PID is stored in meta so ``vibe-deck whoami`` can match this
+        widget to a specific Claude Code process.  The widget_id is
+        kept as ``claude-code-auto`` so that both the adapter heartbeat
+        and hook events (FileWatcher) target the same widget.
         """
         display_cfg = STATUS_TO_DISPLAY.get(
             self._status, STATUS_TO_DISPLAY["offline"]
         )
         ds = DisplayState(**display_cfg)
-        widget_id = f"{self.name}-{self._pid}" if self._pid else f"{self.name}-auto"
         return WidgetState(
-            id=widget_id,
+            id=f"{self.name}-auto",
             type=WidgetType.AGENT,
             display=ds,
             meta={

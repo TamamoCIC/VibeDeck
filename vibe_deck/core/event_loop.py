@@ -304,10 +304,12 @@ class VibeDeckSupervisor:
         if msg.type == MessageType.AGENT_ONLINE:
             agent_name = msg.payload.get("agent_name", "unknown")
             pid = msg.payload.get("pid", 0)
-            # PID-based widget ID so each agent instance gets its own widget
-            widget_id = f"{agent_name}-{pid}" if pid else f"{agent_name}-auto"
+            widget_id = f"{agent_name}-auto"
 
-            # Create a placeholder WidgetState
+            # Create a placeholder WidgetState — PID stored in meta for
+            # "vibe-deck whoami" lookups, but widget_id kept as-is so
+            # hook events (FileWatcher) and adapter heartbeat target
+            # the same widget.
             ds = DisplayState(icon="🆕", color="#64748b", animation="pulse", label="Starting")
             ws = WidgetState(id=widget_id, type=WidgetType.AGENT, display=ds,
                              meta={"agent": agent_name, "pid": pid})
@@ -315,8 +317,7 @@ class VibeDeckSupervisor:
 
         elif msg.type == MessageType.AGENT_OFFLINE:
             agent_name = msg.payload.get("agent_name", "unknown")
-            pid = msg.payload.get("pid", 0)
-            widget_id = f"{agent_name}-{pid}" if pid else f"{agent_name}-auto"
+            widget_id = f"{agent_name}-auto"
             frame = self._engine.get_frame(terminal_id)
             if frame:
                 existing = frame.widgets.get(widget_id)
@@ -369,6 +370,7 @@ class VibeDeckSupervisor:
             import time as _time
 
             updated_tids: list[str] = []
+            _defer_handled = False  # only defer once across all terminals
             for tid in self._engine.list_terminals():
                 frame = self._engine.get_frame(tid)
                 if frame is None:
@@ -392,7 +394,8 @@ class VibeDeckSupervisor:
 
                 if (_hook_event in ("PreToolUse", "PostToolUse")
                         and hasattr(existing, '_waiting_since')
-                        and (now - existing._waiting_since) < MIN_WAITING_DISPLAY_S):
+                        and (now - existing._waiting_since) < MIN_WAITING_DISPLAY_S
+                        and not _defer_handled):
                     existing._pending_display = ds
                     existing._pending_meta = data
                     remaining = MIN_WAITING_DISPLAY_S - (now - existing._waiting_since)
@@ -400,6 +403,7 @@ class VibeDeckSupervisor:
                              _hook_event, remaining)
                     self._schedule_deferred_display(tid, widget_id, remaining)
                     updated_tids.append(tid)
+                    _defer_handled = True
                     continue
 
                 if _hook_event == "Stop":

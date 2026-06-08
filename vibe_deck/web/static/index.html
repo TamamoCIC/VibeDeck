@@ -26,27 +26,42 @@
   #app { display: flex; height: 100vh; }
   #app.noright #right { display: none; }
 
+  /* Hamburger */
+  #hamburger {
+    display: none; position: fixed; top: 10px; left: 10px; z-index: 150;
+    background: var(--panel); border: 1px solid var(--border);
+    color: var(--text); font-size: 1.1rem; padding: 6px 10px;
+    border-radius: 6px; cursor: pointer;
+  }
+  #hamburger:hover { border-color: var(--accent); }
+
   /* Left sidebar */
   #left {
     width: var(--left-w); min-width: var(--left-w);
     background: var(--panel); border-right: 1px solid var(--border);
     display: flex; flex-direction: column; overflow-y: auto;
+    transition: transform 0.2s;
   }
   #left .sec {
-    border-bottom: 1px solid rgba(255,255,255,0.04);
+    border-bottom: 1px solid rgba(255,255,255,0.06);
   }
   #left .sec-hdr {
-    display: flex; align-items: center; gap: 6px;
+    display: flex; align-items: center; gap: 8px;
     padding: 10px 14px; cursor: pointer;
     font-size: 0.78rem; font-weight: 600; color: var(--text-dim);
     text-transform: uppercase; letter-spacing: 0.5px;
-    transition: color 0.15s;
+    transition: color 0.15s, background 0.15s;
+    border-radius: 0;
   }
-  #left .sec-hdr:hover { color: var(--text); }
-  #left .sec-hdr .arrow { font-size: 0.6rem; transition: transform 0.15s; }
+  #left .sec-hdr:hover { color: var(--text); background: rgba(255,255,255,0.02); }
+  #left .sec-hdr .arrow {
+    font-size: 0.65rem; transition: transform 0.2s;
+    display: inline-block; width: 12px; text-align: center;
+  }
   #left .sec.collapsed .sec-body { display: none; }
   #left .sec.collapsed .arrow { transform: rotate(-90deg); }
-  #left .sec-body { padding: 0 10px 10px; font-size: 0.72rem; }
+  #left .sec-body { padding: 4px 10px 10px; font-size: 0.72rem; }
+  #left .sec-body.show { display: block; }
 
   /* Left sidebar — terminals */
   .term-item {
@@ -249,7 +264,12 @@
 
   /* Responsive */
   @media (max-width:900px) {
-    #left { display: none; }
+    #hamburger { display: block; }
+    #left {
+      position: fixed; top:0; left:0; bottom:0; z-index:140;
+      transform: translateX(-100%);
+    }
+    #left.open { transform: translateX(0); }
     #right { width: 240px; min-width: 240px; }
     .key { width: 56px; height: 56px; font-size: 1.2rem; }
     .key .icon { font-size: 1.3rem; }
@@ -262,6 +282,9 @@
 </style>
 </head>
 <body>
+
+<!-- ═══ Hamburger (mobile) ═══ -->
+<button id="hamburger" onclick="toggleSidebar()" title="Toggle sidebar">☰</button>
 
 <!-- ═══ App Layout ═══ -->
 <div id="app" class="noright">
@@ -477,6 +500,19 @@ let selectedGrid = '4x8';
 function toggleSec(id) {
   document.getElementById(id).classList.toggle('collapsed');
 }
+
+function toggleSidebar() {
+  document.getElementById('left').classList.toggle('open');
+}
+
+// Close sidebar on outside click (mobile)
+document.addEventListener('click', (e) => {
+  const left = document.getElementById('left');
+  const hamburger = document.getElementById('hamburger');
+  if (left.classList.contains('open') && !left.contains(e.target) && e.target !== hamburger && !hamburger.contains(e.target)) {
+    left.classList.remove('open');
+  }
+});
 
 // ═══════════════════════════════════════════════════
 // Grid
