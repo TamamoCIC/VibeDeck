@@ -279,6 +279,9 @@ class VibeDeckSupervisor:
                             pass
                 except asyncio.TimeoutError:
                     continue
+                except Exception:
+                    log.exception("[CONSUMER] unhandled error in message consumer — "
+                                  "consumer continues but this message was lost")
         except asyncio.CancelledError:
             pass
         finally:
