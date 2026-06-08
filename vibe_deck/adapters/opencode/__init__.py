@@ -1,13 +1,13 @@
 """
-OpenCode adapter — maps OpenCode SSE events to VibeDeck display states.
+OpenCode adapter — SSE client that maps OpenCode events to VibeDeck display.
 
 Connects to `opencode serve` SSE endpoint at /event and listens for
-session status events.
+session status events. Publishes WIDGET_STATE_UPDATE to MessageBus.
 
 Default display mapping:
-  - busy → 🦊, green, crawl
+  - busy/running → 🦊, green, crawl
   - idle → 🦊, dim green, none
-  - retry → 🔴, red, blink
+  - retry/error → 🔴, red, blink
   - permission_asked → 🟡, yellow, blink (approval)
   - offline → ⚫, dark gray, none
 """
@@ -25,7 +25,7 @@ log = logging.getLogger("vibe_deck.adapters.opencode")
 STATUS_TO_DISPLAY = {
     "running": {"icon": "🦊", "color": "#22c55e", "animation": "crawl", "label": "Running"},
     "idle": {"icon": "🦊", "color": "#166534", "animation": "none", "label": "Idle"},
-    "error": {"icon": "🔴", "color": "#ef4444", "animation": "blink", "label": "Retrying"},
+    "error": {"icon": "🔴", "color": "#ef4444", "animation": "blink", "label": "Error"},
     "approval": {"icon": "🟡", "color": "#eab308", "animation": "blink", "label": "Approve"},
     "offline": {"icon": "⚫", "color": "#374151", "animation": "none", "label": "Offline"},
 }
@@ -36,16 +36,16 @@ class OpenCodeAdapter:
     SSE client that connects to OpenCode's HTTP server and maps
     session status events to VibeDeck Widget states.
 
-    Usage:
-        adapter = OpenCodeAdapter(name="opencode-main", url="http://localhost:4096")
-        await adapter.start()
+    Usage (by AdapterManager):
+        adapter = OpenCodeAdapter(name="opencode", bus=message_bus)
+        await adapter.start()  # runs until stopped
     """
 
-    def __init__(self, name: str = "opencode", url: str = "http://localhost:4096") -> None:
+    def __init__(self, name: str = "opencode", bus=None, url: str = "http://localhost:4096", **kwargs) -> None:
         self.name = name
+        self._bus = bus
         self.url = url.rstrip("/")
         self._status = "offline"
-        self._task: asyncio.Task | None = None
         self._running = False
 
     @property
@@ -55,25 +55,10 @@ class OpenCodeAdapter:
     async def start(self) -> None:
         """Begin listening to OpenCode SSE events."""
         self._running = True
-        self._task = asyncio.create_task(self._listen())
+        await self._publish()
         log.info("OpenCode adapter started: %s", self.url)
 
-    async def stop(self) -> None:
-        """Stop listening."""
-        self._running = False
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-        self._status = "offline"
-        log.info("OpenCode adapter stopped")
-
-    async def _listen(self) -> None:
-        """SSE event loop with auto-reconnect."""
         import aiohttp
-
         backoff = 1
         while self._running:
             try:
@@ -88,8 +73,9 @@ class OpenCodeAdapter:
                             if text.startswith("data: "):
                                 await self._handle_event(text[6:])
             except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                log.warning("OpenCode SSE disconnected: %s. Reconnecting in %ds...", e, backoff)
+                log.debug("OpenCode SSE disconnected: %s. Reconnecting in %ds...", e, backoff)
                 self._status = "offline"
+                await self._publish()
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30)
             except asyncio.CancelledError:
@@ -99,11 +85,19 @@ class OpenCodeAdapter:
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30)
 
+    async def stop(self) -> None:
+        """Stop listening."""
+        self._running = False
+        self._status = "offline"
+        await self._publish()
+        log.info("OpenCode adapter stopped")
+
     async def _handle_event(self, data: str) -> None:
         """Parse an SSE event and update status."""
         try:
             event = json.loads(data)
             event_type = event.get("type", "")
+            old_status = self._status
 
             if event_type == "session.status":
                 session_status = event.get("status", "")
@@ -117,8 +111,28 @@ class OpenCodeAdapter:
                 self._status = "approval"
             elif event_type == "question.asked":
                 self._status = "approval"
+
+            if self._status != old_status:
+                await self._publish()
         except json.JSONDecodeError:
             pass
+
+    async def _publish(self) -> None:
+        """Publish current state to MessageBus."""
+        if self._bus is None:
+            return
+        from ...core.message_bus import Message, MessageType
+        ws = self.as_widget_state()
+        await self._bus.publish(Message(
+            type=MessageType.WIDGET_STATE_UPDATE,
+            source=f"adapter:{self.name}",
+            payload={
+                "agent_name": self.name,
+                "data": {"status": self._status, "url": self.url},
+                "widget_id": ws.id,
+                "display": ws.display.model_dump(),
+            },
+        ))
 
     def as_widget_state(self) -> WidgetState:
         """Produce a WidgetState with the current status."""

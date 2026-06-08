@@ -1,14 +1,14 @@
 """
-OpenClaw adapter — maps OpenClaw Gateway WebSocket events to VibeDeck display.
+OpenClaw adapter — WebSocket client for OpenClaw Gateway events.
 
 Connects to OpenClaw Gateway at ws://127.0.0.1:18789 and subscribes to
-agent lifecycle events.
+agent lifecycle events. Publishes WIDGET_STATE_UPDATE to MessageBus.
 
 Default display mapping:
   - running → 🦞, green, crawl
   - completed/idle → 🦞, dim green, none
-  - failed → 🔴, red, blink
-  - approval_requested → 🟡, yellow, blink
+  - failed/error → 🔴, red, blink
+  - approval → 🟡, yellow, blink
   - offline → ⚫, dark gray, none
 """
 
@@ -36,22 +36,24 @@ class OpenClawAdapter:
     WebSocket client that connects to OpenClaw Gateway and maps
     agent lifecycle events to VibeDeck Widget states.
 
-    Usage:
-        adapter = OpenClawAdapter(name="openclaw-main")
-        await adapter.start()
+    Usage (by AdapterManager):
+        adapter = OpenClawAdapter(name="openclaw", bus=message_bus)
+        await adapter.start()  # runs until stopped
     """
 
     def __init__(
         self,
         name: str = "openclaw",
+        bus=None,
         url: str = "ws://127.0.0.1:18789",
         token: str | None = None,
+        **kwargs,
     ) -> None:
         self.name = name
+        self._bus = bus
         self.url = url
         self._token = token
         self._status = "offline"
-        self._task: asyncio.Task | None = None
         self._running = False
         self._req_id = 0
 
@@ -62,25 +64,10 @@ class OpenClawAdapter:
     async def start(self) -> None:
         """Connect to Gateway and subscribe to events."""
         self._running = True
-        self._task = asyncio.create_task(self._listen())
+        await self._publish()
         log.info("OpenClaw adapter started: %s", self.url)
 
-    async def stop(self) -> None:
-        """Disconnect."""
-        self._running = False
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-        self._status = "offline"
-        log.info("OpenClaw adapter stopped")
-
-    async def _listen(self) -> None:
-        """WebSocket event loop with auto-reconnect."""
         import websockets
-
         backoff = 1
         while self._running:
             try:
@@ -95,12 +82,20 @@ class OpenClawAdapter:
                             break
                         await self._handle_message(raw)
             except Exception as e:
-                log.warning("OpenClaw Gateway disconnected: %s. Reconnecting in %ds...", e, backoff)
+                log.debug("OpenClaw Gateway disconnected: %s. Reconnecting in %ds...", e, backoff)
                 self._status = "offline"
+                await self._publish()
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30)
             except asyncio.CancelledError:
                 break
+
+    async def stop(self) -> None:
+        """Disconnect."""
+        self._running = False
+        self._status = "offline"
+        await self._publish()
+        log.info("OpenClaw adapter stopped")
 
     async def _send(self, ws, method: str, params: dict) -> None:
         """Send a JSON-RPC request frame."""
@@ -118,13 +113,13 @@ class OpenClawAdapter:
         try:
             frame = json.loads(raw)
             frame_type = frame.get("type", "")
+            old_status = self._status
 
             if frame_type == "event":
                 event_name = frame.get("event", "")
                 payload = frame.get("payload", {})
 
                 if event_name == "agent":
-                    # Agent lifecycle event
                     phase = payload.get("phase", "")
                     if phase == "start":
                         self._status = "running"
@@ -134,8 +129,28 @@ class OpenClawAdapter:
                         self._status = "error"
                 elif event_name == "approval":
                     self._status = "approval"
+
+            if self._status != old_status:
+                await self._publish()
         except json.JSONDecodeError:
             pass
+
+    async def _publish(self) -> None:
+        """Publish current state to MessageBus."""
+        if self._bus is None:
+            return
+        from ...core.message_bus import Message, MessageType
+        ws = self.as_widget_state()
+        await self._bus.publish(Message(
+            type=MessageType.WIDGET_STATE_UPDATE,
+            source=f"adapter:{self.name}",
+            payload={
+                "agent_name": self.name,
+                "data": {"status": self._status, "url": self.url},
+                "widget_id": ws.id,
+                "display": ws.display.model_dump(),
+            },
+        ))
 
     def as_widget_state(self) -> WidgetState:
         """Produce a WidgetState with the current status."""

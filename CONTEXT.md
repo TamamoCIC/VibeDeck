@@ -168,16 +168,26 @@ Skills are the **distribution layer** on top of Adapters. An Adapter defines *wh
 
 ## v0.1 Scope
 
-### MVP Adapters
+### MVP Adapters — Integration Strategy
 
-Four built-in adapters, in priority order:
+All four adapters use **passive monitoring** — no agent software modifications required.
 
-| Adapter | Channel | Status Model |
-|---|---|---|
-| **Claude Code** | File watch (hook script → JSON) | running / idle / waiting_for_user / error |
-| **OpenCode** | SSE (`opencode serve`) | busy / idle / retry / permission_asked |
-| **OpenClaw** | WebSocket (Gateway `:18789`) | running / completed / failed / approval_requested |
-| **Telegram** | File watch (Telethon daemon → JSON) | unread / idle / notification per chat |
+| Adapter | Detection | Data Source | Integration |
+|---|---|---|---|
+| **Claude Code** | Process scanner (`claude`, `claude.exe`) | Process polling via `psutil` → writes status JSON to `~/.vibe-deck/agents/` | Daemon-internal poller task; File Watcher picks up JSON changes |
+| **OpenCode** | Process scanner (`opencode serve`) | SSE endpoint at `localhost:4096/event` | Daemon-internal SSE client task; publishes `WIDGET_STATE_UPDATE` to MessageBus |
+| **OpenClaw** | Process scanner (`openclaw`) | WebSocket at `ws://127.0.0.1:18789` (JSON-RPC) | Daemon-internal WS client task; publishes `WIDGET_STATE_UPDATE` to MessageBus |
+| **Telegram** | Config-driven (env vars `TG_API_ID`, `TG_API_HASH`) | Telethon client (user session) | Daemon-internal Telethon task if credentials present; writes JSON → File Watcher |
+
+### Adapter Lifecycle
+
+1. Process Scanner detects agent → publishes `AGENT_ONLINE`
+2. AdapterManager receives `AGENT_ONLINE` → creates matching adapter instance → starts asyncio task
+3. Adapter connects to agent's data source → monitors state changes → publishes `WIDGET_STATE_UPDATE` to MessageBus
+4. LayoutEngine consumes `WIDGET_STATE_UPDATE` → updates Widget display
+5. Process Scanner detects agent exit → publishes `AGENT_OFFLINE` → AdapterManager stops adapter task
+
+Telegram is the exception: it is started at daemon launch if credentials are configured, not triggered by process detection.
 
 ### MVP Widgets
 

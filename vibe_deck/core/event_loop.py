@@ -16,6 +16,29 @@ from .layout import LayoutEngine
 
 log = logging.getLogger("vibe_deck.core.supervisor")
 
+# Built-in adapter class registry (populated by _register_adapters)
+_ADAPTER_REGISTRY: dict[str, type] = {}
+
+
+def _register_adapters() -> None:
+    """Register built-in adapter classes (called at import time)."""
+    from ..adapters.claude_code import ClaudeCodeAdapter
+    from ..adapters.opencode import OpenCodeAdapter
+    from ..adapters.openclaw import OpenClawAdapter
+    from ..adapters.telegram import TelegramAdapter
+    from .adapter_manager import register_adapter
+
+    register_adapter("claude-code", ClaudeCodeAdapter)
+    register_adapter("opencode", OpenCodeAdapter)
+    register_adapter("openclaw", OpenClawAdapter)
+    register_adapter("telegram", TelegramAdapter)
+
+    # Also populate the module-level registry
+    _ADAPTER_REGISTRY["claude-code"] = ClaudeCodeAdapter
+    _ADAPTER_REGISTRY["opencode"] = OpenCodeAdapter
+    _ADAPTER_REGISTRY["openclaw"] = OpenClawAdapter
+    _ADAPTER_REGISTRY["telegram"] = TelegramAdapter
+
 
 def _parse_grid(grid: str) -> tuple[int, int]:
     """Parse a grid string like '4x8' into (rows, cols)."""
@@ -96,17 +119,29 @@ class VibeDeckSupervisor:
         if self._demo:
             self._setup_demo_widgets()
 
-        # 3. Start Connectors
+        # 3. Register built-in adapters
+        _register_adapters()
+
+        # 4. Start Connectors
         if self._autodetect:
             await self._start_connectors()
 
-        # 4. Start Render Engine
+        # 5. Start Adapter Manager
+        from .adapter_manager import AdapterManager
+        self._adapter_manager = AdapterManager(self._bus)
+        await self._adapter_manager.start()
+        # Try starting telegram if configured
+        tg_cls = _ADAPTER_REGISTRY.get("telegram")
+        if tg_cls and tg_cls.is_configured():
+            await self._adapter_manager.start_adapter("telegram")
+
+        # 6. Start Render Engine
         await self._start_renderer()
 
-        # 5. Start frame push loop
+        # 7. Start frame push loop
         self._tasks.append(asyncio.create_task(self._frame_push_loop()))
 
-        # 6. Start message consumer loop
+        # 8. Start message consumer loop
         self._tasks.append(asyncio.create_task(self._message_consumer()))
 
         # Wait for shutdown signal
@@ -283,20 +318,32 @@ class VibeDeckSupervisor:
         elif msg.type == MessageType.WIDGET_STATE_UPDATE:
             agent_name = msg.payload.get("agent_name", "unknown")
             data = msg.payload.get("data", {})
-            widget_id = f"{agent_name}-auto"
+            widget_id = msg.payload.get("widget_id", f"{agent_name}-auto")
 
-            status = data.get("status", "offline")
-            display_map = DISPLAY_MAP.get(agent_name, {})
-            display_cfg = display_map.get(status, {"icon": "⚫", "color": "#374151", "animation": "none", "label": status})
+            # Use display from adapter if provided, else fall back to built-in mapping
+            display_raw = msg.payload.get("display")
+            if display_raw:
+                try:
+                    ds = DisplayState(**display_raw)
+                except Exception:
+                    display_cfg = DISPLAY_MAP.get(agent_name, {}).get(
+                        data.get("status", "offline"),
+                        {"icon": "⚫", "color": "#374151", "animation": "none", "label": "offline"},
+                    )
+                    ds = DisplayState(**display_cfg)
+            else:
+                status = data.get("status", "offline")
+                display_map = DISPLAY_MAP.get(agent_name, {})
+                display_cfg = display_map.get(status, {"icon": "⚫", "color": "#374151", "animation": "none", "label": status})
+                ds = DisplayState(**display_cfg)
 
             frame = self._engine.get_frame(terminal_id)
             if frame:
                 existing = frame.widgets.get(widget_id)
                 if existing:
-                    existing.update_display(**display_cfg)
+                    existing.display = ds
                     existing.meta.update(data)
                 else:
-                    ds = DisplayState(**display_cfg)
                     if "badge" in data:
                         ds.badge = str(data["badge"])
                     ws = WidgetState(id=widget_id, type=WidgetType.AGENT, display=ds, meta=data)
@@ -314,6 +361,13 @@ class VibeDeckSupervisor:
     async def _shutdown(self) -> None:
         """Gracefully shut down all components."""
         log.info("Shutting down...")
+
+        # 0. Stop AdapterManager
+        if hasattr(self, '_adapter_manager'):
+            try:
+                await self._adapter_manager.stop()
+            except Exception:
+                log.debug("AdapterManager stop error (ignored)", exc_info=True)
 
         # 1. Close SSE connections first (prevents aiohttp InvalidStateError on Windows)
         if hasattr(self, '_web_server'):
