@@ -322,22 +322,25 @@ class VibeDeckSupervisor:
             data = msg.payload.get("data", {})
             widget_id = msg.payload.get("widget_id", f"{agent_name}-auto")
 
-            # Use display from adapter if provided, else fall back to built-in mapping
+            # Use display from adapter if provided, else resolve from event data
             display_raw = msg.payload.get("display")
             if display_raw:
                 try:
                     ds = DisplayState(**display_raw)
                 except Exception:
-                    display_cfg = DISPLAY_MAP.get(agent_name, {}).get(
-                        data.get("status", "offline"),
-                        {"icon": "⚫", "color": "#374151", "animation": "none", "label": "offline"},
-                    )
-                    ds = DisplayState(**display_cfg)
+                    ds = self._resolve_display(agent_name, data, DISPLAY_MAP)
             else:
-                status = data.get("status", "offline")
-                display_map = DISPLAY_MAP.get(agent_name, {})
-                display_cfg = display_map.get(status, {"icon": "⚫", "color": "#374151", "animation": "none", "label": status})
-                ds = DisplayState(**display_cfg)
+                ds = self._resolve_display(agent_name, data, DISPLAY_MAP)
+
+            # Apply tool name to label for PreToolUse / PostToolUse events
+            hook_event = data.get("hook_event_name", "")
+            tool_name = data.get("tool_name", "")
+            if hook_event in ("PreToolUse", "PostToolUse") and tool_name:
+                ds.label = tool_name[:12]  # max 12 chars
+
+            # Apply session status label from hook events that carry it
+            if hook_event == "Stop" and data.get("stop_hook_active"):
+                ds.label = "Paused"
 
             frame = self._engine.get_frame(terminal_id)
             if frame:
@@ -359,6 +362,34 @@ class VibeDeckSupervisor:
             agent_name = msg.payload.get("agent_name", "unknown")
             widget_id = f"{agent_name}-auto"
             self._engine.remove_widget(widget_id, terminal_id)
+
+    def _resolve_display(
+        self, agent_name: str, data: dict, display_map: dict
+    ) -> "DisplayState":
+        """Resolve a DisplayState from event data.
+
+        Priority:
+          1. hook_event_name → lookup in display_map[agent_name]
+          2. status          → lookup in display_map[agent_name]
+          3. Fallback offline display
+        """
+        from .types import DisplayState
+
+        adapter_map = display_map.get(agent_name, {})
+        fallback = {"icon": "⚫", "color": "#374151", "animation": "none", "label": "offline"}
+
+        # 1. Try hook event name
+        hook_event = data.get("hook_event_name", "")
+        if hook_event and hook_event in adapter_map:
+            return DisplayState(**adapter_map[hook_event])
+
+        # 2. Try status field
+        status = data.get("status", "")
+        if status and status in adapter_map:
+            return DisplayState(**adapter_map[status])
+
+        # 3. Fallback
+        return DisplayState(**fallback)
 
     async def _shutdown(self) -> None:
         """Gracefully shut down all components."""

@@ -52,6 +52,7 @@ def main():
     _info_parser(sub)
     _mcp_parser(sub)
     _skill_parser(sub)
+    _setup_parser(sub)
 
     args = parser.parse_args()
 
@@ -75,6 +76,7 @@ def main():
         "info": cmd_info,
         "mcp": cmd_mcp,
         "skill": cmd_skill,
+        "setup": cmd_setup,
     }
     handler = cmd_map.get(args.command)
     if handler:
@@ -84,6 +86,18 @@ def main():
 
 
 # ── Parser builders ──────────────────────────────
+
+
+def _setup_parser(sub):
+    p = sub.add_parser("setup", help="Set up agent integrations",
+        description="Set up VibeDeck integrations with AI agents.",
+        epilog="Example: vibe-deck setup claude-code")
+    sp = p.add_subparsers(dest="setup_target")
+    sc = sp.add_parser("claude-code", help="Install Claude Code hooks for VibeDeck",
+        epilog="Example: vibe-deck setup claude-code")
+    sc.add_argument("--reporter-path", help="Custom path for the hook reporter script")
+    sc.add_argument("--no-handshake", action="store_true",
+                    help="Skip the agent handshake message")
 
 
 def _serve_parser(sub):
@@ -505,6 +519,72 @@ def cmd_skill(args):
         print(f"Removing skill: {args.name}")
     else:
         print("Usage: vibe-deck skill {list|install|remove}")
+
+
+def cmd_setup(args):
+    """Set up agent integrations."""
+    if args.setup_target == "claude-code":
+        _cmd_setup_claude_code(args)
+    else:
+        print("Usage: vibe-deck setup claude-code")
+
+
+def _cmd_setup_claude_code(args):
+    """Install Claude Code hook reporter and generate hooks config."""
+    import shutil
+    from pathlib import Path
+    from .config import VIBEDECK_HOME
+
+    reporters_dir = VIBEDECK_HOME / "reporters" / "claude-code"
+    reporters_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Copy reporter.py to ~/.vibe-deck/reporters/claude-code/
+    src = Path(__file__).parent / "adapters" / "claude_code" / "reporter.py"
+    dst = reporters_dir / "reporter.py"
+    reporter_path = args.reporter_path or str(dst.resolve())
+
+    if src.exists():
+        shutil.copy2(src, dst)
+        print(f"📋 Reporter installed: {dst}")
+    else:
+        print(f"⚠️  Reporter source not found: {src}")
+        print("   Skipping reporter copy — existing installation will be used if present.")
+
+    # 2. Generate hooks.json from template
+    template_path = Path(__file__).parent / "adapters" / "claude_code" / "hooks.template.json"
+    hooks_dst = reporters_dir / "hooks.json"
+
+    if template_path.exists():
+        import json as _json
+        template = _json.loads(template_path.read_text(encoding="utf-8"))
+        raw = _json.dumps(template, indent=2, ensure_ascii=False)
+        # Replace placeholder with actual path
+        raw = raw.replace("{{REPORTER_PATH}}", str(Path(reporter_path).resolve()).replace("\\", "\\\\"))
+        hooks_dst.write_text(raw, encoding="utf-8")
+        print(f"🔧 Hooks config:   {hooks_dst}")
+    else:
+        print(f"⚠️  Template not found: {template_path}")
+
+    print()
+
+    # 3. Handshake message
+    if not getattr(args, "no_handshake", False):
+        print("🤝 Agent Handshake")
+        print("─" * 50)
+        print()
+        print("   Tell your Claude Code session:")
+        print()
+        print(f'   "Merge the hooks from {hooks_dst}')
+        print(f'    into ~/.claude/settings.json')
+        print(f'    so VibeDeck can monitor this session."')
+        print()
+        print("   Or add this to your CLI invocation:")
+        print(f"   claude --settings {hooks_dst}")
+        print()
+        print("─" * 50)
+        print("✅ Setup complete. VibeDeck will now see Claude Code hook events.")
+    else:
+        print("✅ Setup complete (handshake suppressed).")
 
 
 if __name__ == "__main__":

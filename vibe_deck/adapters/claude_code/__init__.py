@@ -1,15 +1,26 @@
 """
-Claude Code adapter — polls Claude Code processes and publishes status.
+Claude Code adapter — monitors Claude Code processes and maps hook events.
 
-Uses psutil to detect Claude Code processes by PID and monitors their
-state. Publishes WIDGET_STATE_UPDATE to the MessageBus on status changes.
+Two integration paths (both can coexist):
+  1. Process polling  — psutil heartbeat to detect alive / dead
+  2. Hook events      — Claude Code fires hooks → reporter.py writes JSONL
+                         → FileWatcher picks up → MessageBus → display
+
+The adapter's STATUS_TO_DISPLAY covers every Claude Code hook event so
+that no matter which path produces the update, the display mapping works.
 
 Default display mapping:
-  - running → 🐙, green, crawl
-  - idle → 🐙, dim green, none
-  - waiting_for_user → 🐙, yellow, blink
-  - error → 🔴, red, blink
-  - offline → ⚫, dark gray, none
+  SessionStart       → 🐙, green, crawl  ("Running")
+  Stop               → 🐙, dim green, none ("Idle")
+  UserPromptSubmit   → 🐙, yellow, blink ("Waiting")
+  PreToolUse         → 🐙, green, crawl  ("Tool: <name>")
+  PostToolUse        → 🐙, green, crawl  ("Running")
+  PreCompact         → 🐙, indigo, pulse ("Compacting")
+  SubagentStop       → 🐙, dim green, none ("Sub done")
+  SessionEnd         → ⚫, dark gray, none ("Offline")
+  running (process)  → 🐙, green, crawl  ("Running")
+  offline (process)  → ⚫, dark gray, none ("Offline")
+  error              → 🔴, red, blink    ("Error")
 """
 
 from __future__ import annotations
@@ -23,28 +34,47 @@ from ...core.types import DisplayState, WidgetState, WidgetType
 
 log = logging.getLogger("vibe_deck.adapters.claude_code")
 
-STATUS_TO_DISPLAY = {
-    "running": {"icon": "🐙", "color": "#22c55e", "animation": "crawl", "label": "Running"},
-    "idle": {"icon": "🐙", "color": "#166534", "animation": "none", "label": "Idle"},
-    "waiting_for_user": {"icon": "🐙", "color": "#eab308", "animation": "blink", "label": "Waiting"},
-    "error": {"icon": "🔴", "color": "#ef4444", "animation": "blink", "label": "Error"},
-    "offline": {"icon": "⚫", "color": "#374151", "animation": "none", "label": "Offline"},
+# Maps internal status keys (hook event names + process-based statuses)
+# to VibeDeck display primitives.  Consumers look up by either
+# `hook_event_name` or `status` field.
+STATUS_TO_DISPLAY: dict[str, dict[str, str]] = {
+    # ── Hook event → display ─────────────────────
+    "SessionStart":     {"icon": "🐙", "color": "#22c55e", "animation": "crawl",  "label": "Running"},
+    "Stop":             {"icon": "🐙", "color": "#166534", "animation": "none",   "label": "Idle"},
+    "UserPromptSubmit": {"icon": "🐙", "color": "#eab308", "animation": "blink",  "label": "Waiting"},
+    "PreToolUse":       {"icon": "🐙", "color": "#22c55e", "animation": "crawl",  "label": "Tool"},
+    "PostToolUse":      {"icon": "🐙", "color": "#22c55e", "animation": "crawl",  "label": "Running"},
+    "PreCompact":       {"icon": "🐙", "color": "#6366f1", "animation": "pulse",  "label": "Compact"},
+    "SubagentStop":     {"icon": "🐙", "color": "#166534", "animation": "none",   "label": "Sub done"},
+    "SessionEnd":       {"icon": "⚫", "color": "#374151", "animation": "none",   "label": "Offline"},
+    # ── Process-based status → display ───────────
+    "running":          {"icon": "🐙", "color": "#22c55e", "animation": "crawl",  "label": "Running"},
+    "idle":             {"icon": "🐙", "color": "#166534", "animation": "none",   "label": "Idle"},
+    "waiting_for_user": {"icon": "🐙", "color": "#eab308", "animation": "blink",  "label": "Waiting"},
+    "error":            {"icon": "🔴", "color": "#ef4444", "animation": "blink",  "label": "Error"},
+    "offline":          {"icon": "⚫", "color": "#374151", "animation": "none",   "label": "Offline"},
 }
 
 
 class ClaudeCodeAdapter:
     """
-    Polls a Claude Code process and publishes WidgetState updates.
+    Monitors a Claude Code process and publishes WidgetState updates.
 
-    The adapter monitors a specific PID. If the process dies, it
-    publishes an offline status and exits.
+    Two modes (automatic fallback):
+      - Hook-driven  — display updates arrive via FileWatcher from hook events
+      - Process-poll — psutil heartbeat; detects exit even without hooks
+
+    The adapter writes WIDGET_STATE_UPDATE to the MessageBus on every
+    status change. The supervisor routes these to the LayoutEngine.
 
     Usage (by AdapterManager):
         adapter = ClaudeCodeAdapter(name="claude-code", bus=message_bus, pid=12345)
-        await adapter.start()  # runs until process exits or stopped
+        await adapter.start()
     """
 
-    def __init__(self, name: str = "claude-code", bus=None, pid: int = 0) -> None:
+    def __init__(
+        self, name: str = "claude-code", bus=None, pid: int = 0, **kwargs
+    ) -> None:
         self.name = name
         self._bus = bus
         self._pid = pid
@@ -67,7 +97,7 @@ class ClaudeCodeAdapter:
             return False
 
     async def start(self) -> None:
-        """Begin polling. Runs until stop() is called or process exits."""
+        """Begin monitoring. Runs until stop() is called or process exits."""
         self._running = True
         self._status = "running"
         await self._publish()
@@ -87,7 +117,7 @@ class ClaudeCodeAdapter:
             self._running = False
 
     async def stop(self) -> None:
-        """Stop polling."""
+        """Stop monitoring."""
         self._running = False
         self._status = "offline"
         await self._publish()
@@ -97,25 +127,30 @@ class ClaudeCodeAdapter:
         if self._bus is None:
             return
         from ...core.message_bus import Message, MessageType
+
         ws = self.as_widget_state()
-        await self._bus.publish(Message(
-            type=MessageType.WIDGET_STATE_UPDATE,
-            source=f"adapter:{self.name}",
-            payload={
-                "agent_name": self.name,
-                "data": {
-                    "status": self._status,
-                    "session_id": self._session_id,
-                    "pid": self._pid,
+        await self._bus.publish(
+            Message(
+                type=MessageType.WIDGET_STATE_UPDATE,
+                source=f"adapter:{self.name}",
+                payload={
+                    "agent_name": self.name,
+                    "data": {
+                        "status": self._status,
+                        "session_id": self._session_id,
+                        "pid": self._pid,
+                    },
+                    "widget_id": ws.id,
+                    "display": ws.display.model_dump(),
                 },
-                "widget_id": ws.id,
-                "display": ws.display.model_dump(),
-            },
-        ))
+            )
+        )
 
     def as_widget_state(self) -> WidgetState:
         """Produce a WidgetState with the current status."""
-        display_cfg = STATUS_TO_DISPLAY.get(self._status, STATUS_TO_DISPLAY["offline"])
+        display_cfg = STATUS_TO_DISPLAY.get(
+            self._status, STATUS_TO_DISPLAY["offline"]
+        )
         ds = DisplayState(**display_cfg)
         return WidgetState(
             id=f"{self.name}-auto",
