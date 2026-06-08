@@ -543,10 +543,13 @@ class VibeDeckSupervisor:
                     changed = True
                     log.info("[THINKING] widget %s → Thinking (%.1fs silence on terminal %s)",
                              widget_id, self.THINKING_TIMEOUT_S, terminal_id)
-                # Force immediate frame push so the web UI sees the thinking
-                # state before the next tool event overwrites it
+                # Force immediate frame push to ALL terminals so every
+                # connected device sees the thinking state
                 if changed and hasattr(self, '_web_server'):
-                    await self._web_server.broadcast_frame(terminal_id, frame)
+                    for tid in self._engine.list_terminals():
+                        f = self._engine.get_frame(tid)
+                        if f is not None:
+                            await self._web_server.broadcast_frame(tid, f)
 
             self._thinking_timer = asyncio.create_task(_fire_thinking())
 
