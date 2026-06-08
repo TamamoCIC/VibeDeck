@@ -209,11 +209,13 @@ def _print_qr(url: str) -> None:
 def cmd_serve(args):
     """Start the VibeDeck daemon."""
     expose = getattr(args, 'expose', False)
+    no_physical = getattr(args, 'no_physical', False)
     host = "0.0.0.0" if expose else "localhost"
+    mode = "demo" if args.demo else "live"
     print(f"\n🦞  VibeDeck {__version__}")
-    print(f"   Render:   {'virtual-only' if getattr(args, 'no_physical', False) else args.render}")
+    print(f"   Mode:     {mode} {'(sample widgets)' if args.demo else '(agent detection active)'}")
+    print(f"   Render:   {'virtual-only' if no_physical else args.render}")
     print(f"   Web UI:   http://{host}:{args.port}")
-    print(f"   Demo:     {'yes' if args.demo else 'no'}")
     print(f"   LAN:      {'yes' if expose else 'no (--expose to enable)'}")
     print(f"   Ctrl+C to stop\n")
 

@@ -94,8 +94,8 @@ class VibeDeckSupervisor:
 
     async def start(self) -> None:
         """Start all components and run until shutdown."""
-        log.info("VibeDeck supervisor starting (port=%d, render=%s, demo=%s)",
-                 self._port, self._render, self._demo)
+        log.info("VibeDeck supervisor starting (port=%d, render=%s, demo=%s, expose=%s)",
+                 self._port, self._render, self._demo, self._expose)
 
         # 0. Load Terminal Registry and sync with LayoutEngine
         from .terminal_registry import TerminalRegistry
@@ -115,18 +115,10 @@ class VibeDeckSupervisor:
         )
         await self._web_server.start()
 
-        # 2. Demo mode: populate sample widgets
-        if self._demo:
-            self._setup_demo_widgets()
-
-        # 3. Register built-in adapters
+        # 2. Register built-in adapters
         _register_adapters()
 
-        # 4. Start Connectors
-        if self._autodetect:
-            await self._start_connectors()
-
-        # 5. Start Adapter Manager
+        # 3. Start Adapter Manager
         from .adapter_manager import AdapterManager
         self._adapter_manager = AdapterManager(self._bus)
         await self._adapter_manager.start()
@@ -134,6 +126,14 @@ class VibeDeckSupervisor:
         tg_cls = _ADAPTER_REGISTRY.get("telegram")
         if tg_cls and tg_cls.is_configured():
             await self._adapter_manager.start_adapter("telegram")
+
+        # 4. Start Connectors (process scanner + file watcher)
+        if self._autodetect:
+            await self._start_connectors()
+
+        # 5. Demo mode: populate sample widgets (only if --demo)
+        if self._demo:
+            self._setup_demo_widgets()
 
         # 6. Start Render Engine
         await self._start_renderer()
@@ -143,6 +143,8 @@ class VibeDeckSupervisor:
 
         # 8. Start message consumer loop
         self._tasks.append(asyncio.create_task(self._message_consumer()))
+
+        log.info("Supervisor ready — waiting for agents...")
 
         # Wait for shutdown signal
         try:
