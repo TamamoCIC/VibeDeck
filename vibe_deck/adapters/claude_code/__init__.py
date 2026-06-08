@@ -39,6 +39,8 @@ _BUILTIN_STATUS_TO_DISPLAY: dict[str, dict[str, str]] = {
     "running":          {"icon": "🐙", "color": "#22c55e", "animation": "crawl",  "label": "Running"},
     "idle":             {"icon": "🐙", "color": "#166534", "animation": "none",   "label": "Idle"},
     "waiting_for_user": {"icon": "🐙", "color": "#eab308", "animation": "blink",  "label": "Waiting"},
+    "thinking":         {"icon": "🐙", "color": "#7c3aed", "animation": "pulse",  "label": "Thinking"},
+    "writing":          {"icon": "🐙", "color": "#3b82f6", "animation": "pulse",  "label": "Writing"},
     "error":            {"icon": "🔴", "color": "#ef4444", "animation": "blink",  "label": "Error"},
     "offline":          {"icon": "⚫", "color": "#374151", "animation": "none",   "label": "Offline"},
 }

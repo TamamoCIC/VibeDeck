@@ -81,6 +81,8 @@ class VibeDeckSupervisor:
         self._registry = None  # TerminalRegistry, lazy-loaded
         self._tasks: list[asyncio.Task] = []
         self._shutdown_event = asyncio.Event()
+        self._thinking_timer: asyncio.Task | None = None
+        self._thinking_timer_lock = asyncio.Lock()
 
     # ── Public API ─────────────────────────────────
 
@@ -428,6 +430,14 @@ class VibeDeckSupervisor:
             widget_id = f"{agent_name}-auto"
             self._engine.remove_widget(widget_id, terminal_id)
 
+        # ── Reset thinking timer on every hook event ──────
+        # After a hook event (especially PostToolUse), if no new
+        # event arrives for THINKING_TIMEOUT_S seconds, the widget
+        # transitions to "Thinking" state to make model reasoning
+        # and text generation visible.
+        if msg.type in (MessageType.WIDGET_STATE_UPDATE, MessageType.AGENT_ONLINE):
+            asyncio.create_task(self._reset_thinking_timer(terminal_id))
+
     def _resolve_display(
         self, agent_name: str, data: dict, display_map: dict
     ) -> "DisplayState":
@@ -487,6 +497,47 @@ class VibeDeckSupervisor:
                      widget_id, pending.label)
 
         self._tasks.append(asyncio.create_task(_apply()))
+
+    # ── Thinking / Writing timeout detection ─────────
+
+    THINKING_TIMEOUT_S = 2.0  # seconds of silence before "Thinking"
+
+    async def _reset_thinking_timer(self, terminal_id: str) -> None:
+        """Reset the inactivity timer.  If no new hook event arrives for
+        THINKING_TIMEOUT_S seconds, publish a "Thinking" state to make
+        model reasoning / text generation visible on the widget."""
+        import asyncio
+
+        async with self._thinking_timer_lock:
+            # Cancel previous timer
+            if self._thinking_timer and not self._thinking_timer.done():
+                self._thinking_timer.cancel()
+                try:
+                    await self._thinking_timer
+                except asyncio.CancelledError:
+                    pass
+
+            async def _fire_thinking():
+                await asyncio.sleep(self.THINKING_TIMEOUT_S)
+                frame = self._engine.get_frame(terminal_id)
+                if frame is None:
+                    return
+                from .types import DisplayState
+                from ..adapters.claude_code import STATUS_TO_DISPLAY
+                for widget_id, ws in list(frame.widgets.items()):
+                    current_label = ws.display.label
+                    current_anim = ws.display.animation.value if hasattr(ws.display.animation, 'value') else str(ws.display.animation)
+                    if current_label in ("Waiting", "Idle", "Offline", "Error", "Sub done"):
+                        continue
+                    if current_anim in ("blink",):
+                        continue
+                    thinking_cfg = STATUS_TO_DISPLAY.get("thinking", {"icon": "🐙", "color": "#7c3aed", "animation": "pulse", "label": "Thinking"})
+                    ds = DisplayState(**thinking_cfg)
+                    ws.display = ds
+                    log.info("[THINKING] widget %s → Thinking (%.1fs silence on terminal %s)",
+                             widget_id, self.THINKING_TIMEOUT_S, terminal_id)
+
+            self._thinking_timer = asyncio.create_task(_fire_thinking())
 
     async def _shutdown(self) -> None:
         """Gracefully shut down all components."""
