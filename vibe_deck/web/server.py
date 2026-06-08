@@ -162,11 +162,17 @@ class VibeDeckWebServer:
         renderer = self._get_renderer(frame.rows, frame.cols, frame.display_name)
         keys = renderer.render_frame(frame)
 
+        # Include widget metadata for the web UI inspector panel
+        widget_meta = {
+            wid: ws.meta for wid, ws in frame.widgets.items()
+        }
+
         data = json.dumps({
             "type": "frame",
             "keys": keys,
             "display_name": frame.display_name,
             "terminal_id": terminal_id,
+            "_meta": widget_meta,
         })
 
         dead: list[web.StreamResponse] = []

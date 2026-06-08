@@ -10,1228 +10,952 @@
 <meta name="theme-color" content="#0f0f1a">
 <style>
   :root {
-    --bg: #0f0f1a;
-    --panel: #1a1a2e;
-    --surface: #16213e;
-    --border: #2a2a4a;
-    --text: #e0e0e0;
-    --text-dim: #888;
-    --accent: #22c55e;
-    --danger: #ef4444;
-    --warn: #eab308;
-    --info: #3b82f6;
+    --bg: #0f0f1a; --panel: #1a1a2e; --surface: #16213e;
+    --border: #2a2a4a; --text: #e0e0e0; --text-dim: #888;
+    --accent: #22c55e; --danger: #ef4444; --warn: #eab308; --info: #3b82f6;
+    --left-w: 240px; --right-w: 280px;
   }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
+  * { margin:0; padding:0; box-sizing:border-box; }
   body {
-    background: var(--bg);
-    color: var(--text);
+    background: var(--bg); color: var(--text);
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', sans-serif;
-    display: flex; flex-direction: column; align-items: center;
-    min-height: 100vh; padding: 24px;
-    user-select: none;
+    height: 100vh; overflow: hidden; user-select: none;
   }
 
-  /* Header */
-  .header { text-align: center; margin-bottom: 20px; }
-  .header h1 { font-size: 1.6rem; font-weight: 700; letter-spacing: -0.5px; }
-  .header h1 span { color: var(--accent); }
-  .header .sub { color: var(--text-dim); font-size: 0.82rem; margin-top: 4px; }
+  /* ── Layout ──────────────────────────────── */
+  #app { display: flex; height: 100vh; }
+  #app.noright #right { display: none; }
 
-  /* Toolbar */
-  .toolbar {
-    display: flex; gap: 10px; margin-bottom: 16px;
-    align-items: center; flex-wrap: wrap; justify-content: center;
+  /* Left sidebar */
+  #left {
+    width: var(--left-w); min-width: var(--left-w);
+    background: var(--panel); border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; overflow-y: auto;
   }
-  .toolbar select, .toolbar button {
+  #left .sec {
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+  }
+  #left .sec-hdr {
+    display: flex; align-items: center; gap: 6px;
+    padding: 10px 14px; cursor: pointer;
+    font-size: 0.78rem; font-weight: 600; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: 0.5px;
+    transition: color 0.15s;
+  }
+  #left .sec-hdr:hover { color: var(--text); }
+  #left .sec-hdr .arrow { font-size: 0.6rem; transition: transform 0.15s; }
+  #left .sec.collapsed .sec-body { display: none; }
+  #left .sec.collapsed .arrow { transform: rotate(-90deg); }
+  #left .sec-body { padding: 0 10px 10px; font-size: 0.72rem; }
+
+  /* Left sidebar — terminals */
+  .term-item {
+    display: flex; align-items: center; gap: 6px;
+    padding: 5px 8px; border-radius: 6px; cursor: pointer;
+    transition: background 0.12s; margin-bottom: 2px;
+  }
+  .term-item:hover { background: var(--surface); }
+  .term-item.active { background: var(--surface); border: 1px solid var(--accent); }
+  .term-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .term-dot.active-dot { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+  .term-dot.idle-dot { background: var(--text-dim); }
+  .term-name { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .term-grid { color: var(--text-dim); font-size: 0.65rem; }
+
+  /* Left sidebar — log entries */
+  .log-entry {
+    padding: 2px 8px; font-size: 0.65rem; font-family: 'SF Mono','Cascadia Code',monospace;
+    color: var(--text-dim); border-left: 2px solid transparent;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .log-entry.ts { color: #555; }
+  .log-entry.evt { border-left-color: var(--accent); color: var(--text); }
+
+  /* Center */
+  #center {
+    flex:1; display: flex; flex-direction: column;
+    align-items: center; min-width: 0;
+  }
+
+  /* Top bar */
+  #topbar {
+    width: 100%; padding: 10px 20px;
+    display: flex; align-items: center; gap: 12px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel); flex-shrink: 0;
+  }
+  #topbar .title { font-weight: 700; font-size: 0.95rem; }
+  #topbar .title span { color: var(--accent); }
+  #topbar .spacer { flex:1; }
+  #topbar select, #topbar button {
     background: var(--surface); color: var(--text);
-    border: 1px solid var(--border); padding: 7px 14px;
-    border-radius: 8px; font-size: 0.85rem; cursor: pointer;
-    transition: all 0.15s;
+    border: 1px solid var(--border); padding: 5px 10px;
+    border-radius: 6px; font-size: 0.75rem; cursor: pointer;
   }
-  .toolbar select:hover, .toolbar button:hover { border-color: var(--accent); background: #1f2a4a; }
-  .toolbar button:active { transform: scale(0.97); }
-  .toolbar button.active { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 600; }
-
-  /* Status indicator */
-  .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
+  #topbar select:hover, #topbar button:hover { border-color: var(--accent); }
+  #topbar button.active { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 600; }
+  #topbar .status-row { display: flex; align-items: center; gap: 6px; font-size: 0.72rem; }
+  .status-dot { width: 7px; height: 7px; border-radius: 50%; }
   .status-dot.online { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
   .status-dot.offline { background: var(--danger); }
   .status-dot.waiting { background: var(--warn); animation: pulse 1s infinite; }
-  .status-text { font-size: 0.8rem; color: var(--text-dim); }
 
-  /* Deck grid */
+  /* Grid area */
+  #gridArea {
+    flex:1; display: flex; align-items: center; justify-content: center;
+    width: 100%; overflow: auto;
+  }
   .deck-wrapper {
-    background: #0a0a14;
-    padding: 12px;
-    border-radius: 16px;
+    background: #0a0a14; padding: 12px; border-radius: 16px;
     box-shadow: 0 8px 40px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.03);
   }
-  .deck-grid {
-    display: grid;
-    gap: 5px;
-  }
+  .deck-grid { display: grid; gap: 5px; }
   .key {
-    width: 72px; height: 72px;
-    border-radius: 8px;
+    width: 72px; height: 72px; border-radius: 8px;
     display: flex; flex-direction: column;
     align-items: center; justify-content: center;
-    cursor: pointer;
-    transition: transform 0.08s, box-shadow 0.15s, filter 0.15s;
-    position: relative;
-    font-size: 1.5rem;
-    overflow: hidden;
+    cursor: pointer; transition: transform 0.08s, box-shadow 0.15s, filter 0.15s;
+    position: relative; font-size: 1.5rem; overflow: hidden;
   }
   .key::after {
-    content: '';
-    position: absolute; inset: 0;
-    border-radius: 8px;
+    content:''; position:absolute; inset:0; border-radius:8px;
     background: linear-gradient(135deg, rgba(255,255,255,0.08) 0%, transparent 50%);
     pointer-events: none;
   }
   .key:hover { filter: brightness(1.25); box-shadow: 0 0 12px rgba(255,255,255,0.08); }
   .key:active { transform: scale(0.92); }
-  .key .icon { font-size: 1.6rem; line-height: 1; pointer-events: none; }
+  .key.selected { box-shadow: 0 0 0 2px var(--accent), 0 0 12px rgba(34,197,94,0.3); }
+  .key .icon { font-size: 1.6rem; line-height:1; pointer-events:none; }
   .key .label {
-    font-size: 0.58rem; margin-top: 3px; text-align: center;
-    max-width: 64px; overflow: hidden; text-overflow: ellipsis;
-    white-space: nowrap; pointer-events: none; opacity: 0.9;
+    font-size:0.58rem; margin-top:3px; text-align:center;
+    max-width:64px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    pointer-events:none; opacity:0.9;
   }
   .key .badge {
-    position: absolute; top: 4px; right: 5px;
-    background: var(--danger); color: white; font-size: 0.55rem;
-    font-weight: 700; border-radius: 50%; min-width: 18px; height: 18px;
-    display: flex; align-items: center; justify-content: center;
-    padding: 0 4px; pointer-events: none;
+    position:absolute; top:4px; right:5px; background:var(--danger);
+    color:#fff; font-size:0.55rem; font-weight:700; border-radius:50%;
+    min-width:18px; height:18px; display:flex; align-items:center; justify-content:center;
+    pointer-events:none;
   }
 
-  /* Animations */
+  /* Key animations */
   .key.pulse { animation: pulse 1.5s ease-in-out infinite; }
   .key.blink { animation: blink 0.8s ease-in-out infinite; }
   .key.crawl { animation: crawl 3s ease-in-out infinite; }
   .key.progress { animation: progress 2s linear infinite; }
-
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.45; }
-  }
-  @keyframes blink {
-    0%, 45% { opacity: 1; }
-    50%, 95% { opacity: 0.2; }
-    100% { opacity: 1; }
-  }
-  @keyframes crawl {
-    0%, 100% { filter: brightness(1); }
-    30% { filter: brightness(1.4) saturate(1.3); }
-    60% { filter: brightness(0.9); }
-  }
-  @keyframes progress {
-    0% { background-position: 0% 50%; }
-    100% { background-position: 200% 50%; }
-  }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.45} }
+  @keyframes blink { 0%,45%{opacity:1} 50%,95%{opacity:0.2} 100%{opacity:1} }
+  @keyframes crawl { 0%,100%{filter:brightness(1)} 30%{filter:brightness(1.4) saturate(1.3)} 60%{filter:brightness(0.9)} }
+  @keyframes progress { 0%{background-position:0% 50%} 100%{background-position:200% 50%} }
 
   /* Empty state */
   .empty-state {
-    text-align: center; padding: 40px; color: var(--text-dim);
-    grid-column: 1 / -1; align-self: center;
+    text-align:center; padding:40px; color:var(--text-dim);
+    grid-column:1/-1; align-self:center;
   }
-  .empty-state .empty-icon { font-size: 2.5rem; margin-bottom: 12px; }
-  .empty-state p { margin: 4px 0; font-size: 0.9rem; }
-  .empty-state .tip { font-size: 0.75rem; color: #555; margin-top: 8px; }
+  .empty-state .empty-icon { font-size:2.5rem; margin-bottom:12px; }
+  .empty-state p { margin:4px 0; font-size:0.9rem; }
+  .empty-state .tip { font-size:0.75rem; color:#555; margin-top:8px; }
 
-  /* Footer / log */
-  .footer { margin-top: 16px; text-align: center; }
-  .footer .log { font-size: 0.75rem; color: var(--text-dim); min-height: 20px; }
-  .footer .shortcuts { font-size: 0.7rem; color: #444; margin-top: 6px; }
+  /* Right sidebar */
+  #right {
+    width: var(--right-w); min-width: var(--right-w);
+    background: var(--panel); border-left: 1px solid var(--border);
+    display: flex; flex-direction: column; overflow-y: auto;
+  }
+  #right .insp-header {
+    padding: 12px 14px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 0.8rem; font-weight: 600;
+  }
+  #right .insp-body { padding: 12px 14px; font-size: 0.75rem; }
+  #right .insp-empty { color: var(--text-dim); text-align: center; padding: 40px 14px; font-size: 0.78rem; }
+  #right .insp-row { margin-bottom: 10px; }
+  #right .insp-label { color: var(--text-dim); font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
+  #right .insp-val { color: var(--text); word-break: break-all; }
+  #right input, #right select {
+    width: 100%; background: var(--surface); border: 1px solid var(--border);
+    color: var(--text); padding: 4px 8px; border-radius: 5px; font-size: 0.75rem;
+  }
+  #right input[type=color] { width: 36px; height: 28px; padding: 1px; cursor: pointer; }
+  .insp-swatch { display: inline-block; width: 14px; height: 14px; border-radius: 3px; vertical-align: middle; margin-right: 4px; border: 1px solid var(--border); }
 
-  /* Tooltip */
-  .tooltip {
-    position: absolute; bottom: -28px; left: 50%; transform: translateX(-50%);
-    background: #000; color: #fff; font-size: 0.65rem; padding: 2px 8px;
-    border-radius: 4px; white-space: nowrap; pointer-events: none;
-    opacity: 0; transition: opacity 0.15s; z-index: 10;
+  /* Buttons */
+  .btn-sm {
+    background:var(--surface); color:var(--text); border:1px solid var(--border);
+    padding:3px 8px; border-radius:5px; cursor:pointer; font-size:0.7rem;
   }
-  .key:hover .tooltip { opacity: 1; }
-
-  /* Setup Wizard */
-  .wizard-container {
-    display: flex; flex-direction: column; align-items: center;
-    justify-content: center; min-height: 80vh; padding: 20px;
-  }
-  .wizard-card {
-    background: var(--panel); border: 1px solid var(--border);
-    border-radius: 16px; padding: 32px 24px; max-width: 380px; width: 100%;
-    text-align: center;
-  }
-  .wizard-card h2 { font-size: 1.4rem; margin-bottom: 6px; }
-  .wizard-card .wizard-sub { color: var(--text-dim); font-size: 0.85rem; margin-bottom: 24px; }
-  .grid-options { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; justify-content: center; }
-  .grid-option {
-    background: var(--surface); border: 2px solid var(--border);
-    border-radius: 12px; padding: 16px 12px; cursor: pointer;
-    text-align: center; min-width: 90px; transition: all 0.15s;
-    flex: 1; max-width: 110px;
-  }
-  .grid-option:hover { border-color: var(--info); }
-  .grid-option.selected { border-color: var(--accent); background: #1a2e1a; }
-  .grid-option .go-size { font-size: 1.3rem; font-weight: 700; margin-bottom: 4px; }
-  .grid-option .go-label { font-size: 0.7rem; color: var(--text-dim); }
-  .grid-option .go-keys { font-size: 0.65rem; color: #555; margin-top: 2px; }
-  .wizard-input {
-    width: 100%; padding: 10px 14px; background: var(--surface);
-    border: 1px solid var(--border); border-radius: 10px;
-    color: var(--text); font-size: 0.9rem; margin-bottom: 16px;
-    text-align: center; outline: none;
-  }
-  .wizard-input:focus { border-color: var(--accent); }
-  .wizard-btn {
-    width: 100%; padding: 12px; background: var(--accent);
-    color: #000; border: none; border-radius: 10px;
-    font-size: 1rem; font-weight: 600; cursor: pointer;
-    transition: all 0.15s;
-  }
-  .wizard-btn:hover { filter: brightness(1.15); }
-  .wizard-btn:active { transform: scale(0.97); }
-  .wizard-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-  .wizard-error { color: var(--danger); font-size: 0.8rem; margin-top: 10px; min-height: 20px; }
-
-  /* Responsive */
-  @media (max-width: 700px) {
-    .key { width: 56px; height: 56px; font-size: 1.2rem; }
-    .key .icon { font-size: 1.3rem; }
-    .key .label { font-size: 0.5rem; max-width: 48px; }
-  }
-  @media (max-width: 500px) {
-    .deck-grid { gap: 3px; }
-    .key { width: 48px; height: 48px; font-size: 1rem; }
-    .key .icon { font-size: 1.1rem; }
-    .key .label { font-size: 0.45rem; max-width: 40px; }
-    .toolbar select, .toolbar button { font-size: 0.75rem; padding: 5px 10px; }
-  }
+  .btn-sm:hover { border-color: var(--accent); }
+  .btn-accent { background:var(--accent); color:#000; border:none; font-weight:600; }
+  .btn-accent:hover { filter:brightness(1.15); }
 
   /* Modal */
   .modal {
-    position: fixed; inset: 0; z-index: 100;
-    background: rgba(0,0,0,0.6);
-    display: flex; align-items: center; justify-content: center;
+    position:fixed; inset:0; z-index:200; background:rgba(0,0,0,0.6);
+    display:flex; align-items:center; justify-content:center;
   }
   .modal-card {
-    background: var(--panel); border: 1px solid var(--border);
-    border-radius: 14px; padding: 0; max-width: 440px; width: 90%;
-    max-height: 80vh; overflow-y: auto;
+    background:var(--panel); border:1px solid var(--border);
+    border-radius:14px; max-width:480px; width:90%; max-height:80vh; overflow-y:auto;
   }
-  .modal-header, .modal-footer { padding: 14px 18px; display: flex; align-items: center; justify-content: space-between; }
-  .modal-header { border-bottom: 1px solid var(--border); }
-  .modal-header h3 { font-size: 1rem; margin: 0; }
-  .modal-footer { border-top: 1px solid var(--border); }
-  .modal-close, .popover-close {
-    background: none; border: none; color: var(--text-dim);
-    font-size: 1.1rem; cursor: pointer; padding: 4px 8px; border-radius: 4px;
-  }
-  .modal-close:hover, .popover-close:hover { background: var(--surface); }
-  .modal-body { padding: 16px 18px; }
-  .dim { color: var(--text-dim); font-size: 0.85rem; }
+  .modal-header, .modal-footer { padding:12px 18px; display:flex; align-items:center; justify-content:space-between; }
+  .modal-header { border-bottom:1px solid var(--border); }
+  .modal-header h3 { font-size:0.95rem; margin:0; }
+  .modal-footer { border-top:1px solid var(--border); }
+  .modal-close { background:none; border:none; color:var(--text-dim); font-size:1.1rem; cursor:pointer; padding:4px 8px; border-radius:4px; }
+  .modal-close:hover { background:var(--surface); }
+  .modal-body { padding:14px 18px; }
+  .dim { color:var(--text-dim); font-size:0.85rem; }
 
-  /* Appearance editor rows */
-  .evt-row {
-    display: grid; grid-template-columns: 2fr 1fr auto auto 2fr;
-    gap: 6px; align-items: center; padding: 6px 0;
-    border-bottom: 1px solid rgba(255,255,255,0.04);
-    font-size: 0.8rem;
+  /* Wizard */
+  .wizard-container {
+    display:flex; flex-direction:column; align-items:center;
+    justify-content:center; min-height:100vh; padding:20px;
   }
-  .evt-row .evt-name { font-weight: 600; color: var(--text); }
-  .evt-row input, .evt-row select {
-    background: var(--surface); border: 1px solid var(--border);
-    color: var(--text); padding: 4px 6px; border-radius: 5px;
-    font-size: 0.78rem; width: 100%; box-sizing: border-box;
+  .wizard-card {
+    background:var(--panel); border:1px solid var(--border);
+    border-radius:16px; padding:32px 24px; max-width:380px; width:100%; text-align:center;
   }
-  .evt-row input[type=color] { width: 32px; height: 28px; padding: 1px; }
+  .wizard-card h2 { font-size:1.4rem; margin-bottom:6px; }
+  .wizard-sub { color:var(--text-dim); font-size:0.85rem; margin-bottom:24px; }
+  .grid-options { display:flex; gap:10px; margin-bottom:20px; flex-wrap:wrap; justify-content:center; }
+  .grid-option {
+    background:var(--surface); border:2px solid var(--border);
+    border-radius:12px; padding:16px 12px; cursor:pointer;
+    text-align:center; min-width:90px; transition:all 0.15s;
+    flex:1; max-width:110px;
+  }
+  .grid-option:hover { border-color:var(--info); }
+  .grid-option.selected { border-color:var(--accent); background:#1a2e1a; }
+  .grid-option .go-size { font-size:1.3rem; font-weight:700; margin-bottom:4px; }
+  .grid-option .go-label { font-size:0.7rem; color:var(--text-dim); }
+  .grid-option .go-keys { font-size:0.65rem; color:#555; margin-top:2px; }
+  .wizard-input {
+    width:100%; padding:10px 14px; background:var(--surface);
+    border:1px solid var(--border); border-radius:10px;
+    color:var(--text); font-size:0.9rem; margin-bottom:16px;
+    text-align:center; outline:none;
+  }
+  .wizard-input:focus { border-color:var(--accent); }
+  .wizard-btn {
+    width:100%; padding:12px; background:var(--accent);
+    color:#000; border:none; border-radius:10px;
+    font-size:1rem; font-weight:600; cursor:pointer; transition:all 0.15s;
+  }
+  .wizard-btn:hover { filter:brightness(1.15); }
+  .wizard-btn:active { transform:scale(0.97); }
+  .wizard-btn:disabled { opacity:0.4; cursor:not-allowed; }
+  .wizard-error { color:var(--danger); font-size:0.8rem; margin-top:10px; min-height:20px; }
 
-  /* Popover (key inspector) */
-  .popover {
-    position: fixed; z-index: 99; min-width: 220px; max-width: 280px;
-    background: var(--panel); border: 1px solid var(--border);
-    border-radius: 10px; box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+  /* Responsive */
+  @media (max-width:900px) {
+    #left { display: none; }
+    #right { width: 240px; min-width: 240px; }
+    .key { width: 56px; height: 56px; font-size: 1.2rem; }
+    .key .icon { font-size: 1.3rem; }
   }
-  .popover-header {
-    padding: 8px 10px; display: flex; align-items: center;
-    justify-content: space-between; border-bottom: 1px solid var(--border);
-    font-size: 0.82rem;
-  }
-  .popover-body { padding: 10px; font-size: 0.75rem; line-height: 1.5; }
-  .popover-body .insp-label { color: var(--text-dim); font-size: 0.68rem; text-transform: uppercase; }
-  .popover-body .insp-val { color: var(--text); margin-bottom: 6px; }
-  .popover-body .insp-swatch {
-    display: inline-block; width: 14px; height: 14px; border-radius: 3px;
-    vertical-align: middle; margin-right: 4px; border: 1px solid var(--border);
-  }
-
-  /* Visual timeline */
-  .vis-log-wrap { margin-top: 8px; text-align: left; max-width: 600px; margin-inline: auto; }
-  .vis-log-summary { font-size: 0.72rem; color: var(--text-dim); cursor: pointer; padding: 4px 8px; border-radius: 4px; }
-  .vis-log-summary:hover { background: var(--surface); }
-  .vis-log { max-height: 300px; overflow-y: auto; margin-top: 4px; }
-  .vis-entry {
-    display: grid; grid-template-columns: 52px auto 56px 100px;
-    gap: 8px; align-items: center; padding: 3px 6px;
-    font-size: 0.68rem; border-bottom: 1px solid rgba(255,255,255,0.03);
-    font-family: 'SF Mono','Cascadia Code','Consolas',monospace;
-  }
-  .vis-entry .ve-ts { color: var(--text-dim); }
-  .vis-entry .ve-icon { font-size: 1rem; text-align: center; }
-  .vis-entry .ve-event { color: var(--text); }
-  .vis-entry .ve-label { color: var(--text-dim); }
-  .vis-entry .ve-swatch {
-    display: inline-block; width: 10px; height: 10px; border-radius: 2px;
-    vertical-align: middle; margin-right: 3px;
+  @media (max-width:600px) {
+    #right { display: none; }
+    .key { width: 48px; height: 48px; font-size: 1rem; }
+    .key .icon { font-size: 1.1rem; }
   }
 </style>
 </head>
 <body>
 
-<!-- ═══ App View (grid) ═══ -->
-<div id="app-view" style="display:none">
+<!-- ═══ App Layout ═══ -->
+<div id="app" class="noright">
 
-<div class="header">
-  <h1><span>🦞</span> VibeDeck</h1>
-  <p class="sub" id="headerName">Virtual Terminal</p>
-</div>
+<!-- ── Left Sidebar ── -->
+<aside id="left">
+  <div style="padding:14px;border-bottom:1px solid var(--border);font-weight:700;font-size:0.9rem">
+    🦞 <span style="color:var(--accent)">VibeDeck</span>
+  </div>
 
-<div class="toolbar">
-  <select id="deckType" onchange="changeDeck()" title="Switch terminal grid / active layout">
-    <option value="2x3">2×3 Layout</option>
-    <option value="3x5">3×5 Layout</option>
-    <option value="4x8" selected>4×8 Layout</option>
-  </select>
-  <button id="btnMode" onclick="toggleMode()" class="active">🔍 Live</button>
-  <button onclick="showVisualConfig()" title="Widget appearance editor">🎨 Visual</button>
-  <button onclick="showSaveDialog()" title="Save layout">💾 Save</button>
-  <button onclick="showLoadDialog()" title="Load layout">📂 Load</button>
-  <button onclick="showTerminalList()" title="Manage terminals & devices">📡 Terminals</button>
-  <button onclick="showThemeEditor()" title="UI theme colors">💅 Theme</button>
-  <span class="status-text">
-    <span class="status-dot waiting" id="statusDot"></span>
-    <span id="statusLabel">Connecting...</span>
-  </span>
-</div>
+  <!-- Terminals -->
+  <div class="sec" id="secTerminals">
+    <div class="sec-hdr" onclick="toggleSec('secTerminals')">
+      <span class="arrow">▼</span> 📡 Terminals
+    </div>
+    <div class="sec-body" id="terminalList"></div>
+  </div>
 
-<div class="deck-wrapper">
-  <div class="deck-grid" id="deck">
-    <div class="empty-state">
-      <div class="empty-icon">🦞</div>
-      <p><strong>No agents detected</strong></p>
-      <p>Start Claude Code, OpenCode, or another supported agent.</p>
-      <p class="tip">Run <code>vibe-deck serve --demo</code> for sample widgets.</p>
+  <!-- Developer -->
+  <div class="sec collapsed" id="secDev">
+    <div class="sec-hdr" onclick="toggleSec('secDev')">
+      <span class="arrow">▼</span> 🔧 Developer
+    </div>
+    <div class="sec-body" id="devBody">
+      <p style="color:var(--text-dim);font-size:0.68rem">API: <code>localhost:9734</code></p>
+      <button class="btn-sm" style="margin-top:6px" onclick="showWizard()">＋ New Virtual Terminal</button>
+    </div>
+  </div>
+
+  <!-- Logs -->
+  <div class="sec" id="secLogs">
+    <div class="sec-hdr" onclick="toggleSec('secLogs')">
+      <span class="arrow">▼</span> 📋 Logs
+      <span style="margin-left:auto;font-size:0.6rem;color:var(--text-dim)" id="logCount">0</span>
+    </div>
+    <div class="sec-body" id="logBody" style="max-height:200px;overflow-y:auto">
+      <div class="log-entry ts">Waiting for events...</div>
+    </div>
+  </div>
+
+  <!-- Settings -->
+  <div class="sec collapsed" id="secSettings">
+    <div class="sec-hdr" onclick="toggleSec('secSettings')">
+      <span class="arrow">▼</span> ⚙️ Settings
+    </div>
+    <div class="sec-body">
+      <button class="btn-sm" style="width:100%;margin-bottom:4px" onclick="showVisualConfig()">🎨 Widget Appearance</button>
+      <button class="btn-sm" style="width:100%;margin-bottom:4px" onclick="showThemeEditor()">💅 UI Theme</button>
+      <button class="btn-sm" style="width:100%;margin-bottom:4px" onclick="showSaveDialog()">💾 Save Layout</button>
+      <button class="btn-sm" style="width:100%" onclick="showLoadDialog()">📂 Load Layout</button>
+    </div>
+  </div>
+</aside>
+
+<!-- ── Center Area ── -->
+<div id="center">
+  <!-- Top bar -->
+  <div id="topbar">
+    <div class="title">🦞 <span>VibeDeck</span></div>
+    <select id="deckType" onchange="changeDeck()" title="Grid layout">
+      <option value="2x3">2×3</option>
+      <option value="3x5">3×5</option>
+      <option value="4x8" selected>4×8</option>
+    </select>
+    <button id="btnMode" onclick="toggleMode()" class="active">🔍 Live</button>
+    <div class="spacer"></div>
+    <div class="status-row">
+      <span class="status-dot waiting" id="statusDot"></span>
+      <span id="statusLabel" style="color:var(--text-dim)">Connecting...</span>
+    </div>
+    <span style="font-size:0.7rem;color:var(--text-dim)" id="headerName"></span>
+  </div>
+
+  <!-- Grid -->
+  <div id="gridArea">
+    <div class="deck-wrapper">
+      <div class="deck-grid" id="deck">
+        <div class="empty-state">
+          <div class="empty-icon">🦞</div>
+          <p><strong>No agents detected</strong></p>
+          <p>Start Claude Code, OpenCode, or another supported agent.</p>
+          <p class="tip">Run <code>vibe-deck serve --demo</code> for sample widgets.</p>
+        </div>
+      </div>
     </div>
   </div>
 </div>
 
-<div class="footer">
-  <p class="log" id="log">Click a key to simulate press</p>
-  <details class="vis-log-wrap">
-    <summary class="vis-log-summary">📋 Visual Timeline (<span id="visLogCount">0</span> events)</summary>
-    <div class="vis-log" id="visLog"></div>
-  </details>
-  <p class="shortcuts">Keys <kbd>0</kbd>-<kbd>9</kbd> simulate key presses &nbsp;|&nbsp; <kbd>R</kbd> reset &nbsp;|&nbsp; <kbd>M</kbd> toggle mode</p>
-</div>
-
-</div><!-- /app-view -->
-
-<!-- ═══ Key Inspector Popover ═══ -->
-<div id="keyInspector" class="popover" style="display:none">
-  <div class="popover-header">
-    <strong id="inspKeyIdx">Key 0</strong>
-    <button class="popover-close" onclick="hideInspector()">✕</button>
+<!-- ── Right Sidebar (Widget Inspector) ── -->
+<aside id="right">
+  <div class="insp-header">
+    🔍 Widget Inspector
+    <button class="modal-close" onclick="deselectWidget()" title="Close">✕</button>
   </div>
-  <div class="popover-body" id="inspBody"></div>
-</div>
+  <div class="insp-empty" id="inspEmpty">
+    <p>Click a widget key<br>to inspect it</p>
+    <p style="font-size:0.65rem;margin-top:6px">Switch to <strong>Inspect</strong> mode<br>in the top bar</p>
+  </div>
+  <div class="insp-body" id="inspBody" style="display:none">
+    <div class="insp-row">
+      <div class="insp-label">Widget ID</div>
+      <div class="insp-val" id="inspId">—</div>
+    </div>
+    <div class="insp-row">
+      <div class="insp-label">Type</div>
+      <div class="insp-val" id="inspType">—</div>
+    </div>
+    <div class="insp-row">
+      <div class="insp-label">Key Index</div>
+      <div class="insp-val" id="inspKey">—</div>
+    </div>
+    <div class="insp-row">
+      <div class="insp-label">Icon</div>
+      <input type="text" id="inspIcon" maxlength="4" onchange="updateInspectedWidget()">
+    </div>
+    <div class="insp-row">
+      <div class="insp-label">Color</div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <input type="color" id="inspColor" onchange="updateInspectedWidget()">
+        <span style="font-size:0.7rem;font-family:monospace" id="inspColorHex">#000</span>
+      </div>
+    </div>
+    <div class="insp-row">
+      <div class="insp-label">Animation</div>
+      <select id="inspAnim" onchange="updateInspectedWidget()">
+        <option>none</option><option>pulse</option><option>crawl</option><option>blink</option><option>progress</option>
+      </select>
+    </div>
+    <div class="insp-row">
+      <div class="insp-label">Label</div>
+      <input type="text" id="inspLabel" maxlength="12" onchange="updateInspectedWidget()">
+    </div>
+    <div class="insp-row" id="inspBadgeRow" style="display:none">
+      <div class="insp-label">Badge</div>
+      <div class="insp-val" id="inspBadge">—</div>
+    </div>
+    <div class="insp-row">
+      <div class="insp-label">Meta</div>
+      <pre id="inspMeta" style="font-size:0.6rem;color:var(--text-dim);max-height:120px;overflow-y:auto;background:var(--bg);padding:6px;border-radius:4px">—</pre>
+    </div>
+  </div>
+</aside>
 
-<!-- ═══ Visual Config Modal ═══ -->
+</div><!-- /app -->
+
+<!-- ═══ Modals ═══ -->
 <div id="visualModal" class="modal" style="display:none">
   <div class="modal-card">
-    <div class="modal-header">
-      <h3>🎨 Widget Appearance</h3>
-      <button class="modal-close" onclick="closeModal('visualModal')">✕</button>
-    </div>
+    <div class="modal-header"><h3>🎨 Widget Appearance</h3><button class="modal-close" onclick="closeModal('visualModal')">✕</button></div>
     <div class="modal-body" id="visualBody"><p class="dim">Loading...</p></div>
-    <div class="modal-footer">
-      <button class="wizard-btn" onclick="saveAppearance()">💾 Save</button>
-    </div>
+    <div class="modal-footer"><button class="wizard-btn" onclick="saveAppearance()">💾 Save</button></div>
   </div>
 </div>
 
-<!-- ═══ Theme Editor Modal ═══ -->
 <div id="themeModal" class="modal" style="display:none">
   <div class="modal-card">
-    <div class="modal-header">
-      <h3>💅 UI Theme</h3>
-      <button class="modal-close" onclick="closeModal('themeModal')">✕</button>
-    </div>
+    <div class="modal-header"><h3>💅 UI Theme</h3><button class="modal-close" onclick="closeModal('themeModal')">✕</button></div>
     <div class="modal-body" id="themeBody"><p class="dim">Loading...</p></div>
-    <div class="modal-footer">
-      <button class="wizard-btn" onclick="saveTheme()">💾 Save</button>
-    </div>
+    <div class="modal-footer"><button class="wizard-btn" onclick="saveTheme()">💾 Save</button></div>
   </div>
 </div>
 
-<!-- ═══ Save Layout Dialog ═══ -->
 <div id="saveModal" class="modal" style="display:none">
   <div class="modal-card">
-    <div class="modal-header">
-      <h3>💾 Save Layout</h3>
-      <button class="modal-close" onclick="closeModal('saveModal')">✕</button></div>
-    <div class="modal-body">
-      <input class="wizard-input" id="saveName" placeholder="Layout name" maxlength="40">
-    </div>
-    <div class="modal-footer">
-      <button class="wizard-btn" onclick="saveLayout()">Save</button>
-    </div>
+    <div class="modal-header"><h3>💾 Save Layout</h3><button class="modal-close" onclick="closeModal('saveModal')">✕</button></div>
+    <div class="modal-body"><input class="wizard-input" id="saveName" placeholder="Layout name" maxlength="40"></div>
+    <div class="modal-footer"><button class="wizard-btn" onclick="saveLayout()">Save</button></div>
   </div>
 </div>
 
-<!-- ═══ Load Layout Dialog ═══ -->
 <div id="loadModal" class="modal" style="display:none">
   <div class="modal-card">
-    <div class="modal-header">
-      <h3>📂 Load Layout</h3>
-      <button class="modal-close" onclick="closeModal('loadModal')">✕</button></div>
+    <div class="modal-header"><h3>📂 Load Layout</h3><button class="modal-close" onclick="closeModal('loadModal')">✕</button></div>
     <div class="modal-body" id="loadList"><p class="dim">Loading...</p></div>
   </div>
 </div>
 
-<!-- ═══ Terminal List Modal ═══ -->
-<div id="terminalListModal" class="modal" style="display:none">
-  <div class="modal-card">
-    <div class="modal-header">
-      <h3>📡 Terminals & Devices</h3>
-      <button class="modal-close" onclick="closeModal('terminalListModal')">✕</button>
-    </div>
-    <div class="modal-body" id="terminalListBody">
-      <p class="dim">Loading...</p>
-    </div>
-    <div class="modal-footer" style="justify-content:center">
-      <button class="wizard-btn" onclick="closeModal('terminalListModal'); showWizard()" style="width:auto;padding:8px 24px">
-        ＋ Connect New Device
-      </button>
-    </div>
-  </div>
-</div>
-
-<!-- ═══ Setup Wizard View ═══ -->
-<div id="wizard-view" style="display:none">
-
+<!-- ═══ Setup Wizard (overlay) ═══ -->
+<div id="wizard-view" style="display:none;position:fixed;inset:0;z-index:300;background:var(--bg)">
 <div class="wizard-container">
   <div class="wizard-card">
     <h2>🦞 Welcome to VibeDeck</h2>
     <p class="wizard-sub">Connect this device as a monitoring terminal</p>
-
-    <p style="font-size:0.8rem;color:var(--text-dim);margin-bottom:10px;">Choose your grid layout</p>
+    <p style="font-size:0.8rem;color:var(--text-dim);margin-bottom:10px">Choose your grid layout</p>
     <div class="grid-options" id="gridOptions">
-      <div class="grid-option" data-grid="3x4" onclick="selectGrid(this)">
-        <div class="go-size">3×4</div>
-        <div class="go-label">Sparse</div>
-        <div class="go-keys">12 keys</div>
-      </div>
-      <div class="grid-option" data-grid="3x5" onclick="selectGrid(this)">
-        <div class="go-size">3×5</div>
-        <div class="go-label">Standard</div>
-        <div class="go-keys">15 keys</div>
-      </div>
-      <div class="grid-option selected" data-grid="4x8" onclick="selectGrid(this)">
-        <div class="go-size">4×8</div>
-        <div class="go-label">Dense</div>
-        <div class="go-keys">32 keys</div>
-      </div>
+      <div class="grid-option" data-grid="3x4" onclick="selectGrid(this)"><div class="go-size">3×4</div><div class="go-label">Sparse</div><div class="go-keys">12 keys</div></div>
+      <div class="grid-option" data-grid="3x5" onclick="selectGrid(this)"><div class="go-size">3×5</div><div class="go-label">Standard</div><div class="go-keys">15 keys</div></div>
+      <div class="grid-option selected" data-grid="4x8" onclick="selectGrid(this)"><div class="go-size">4×8</div><div class="go-label">Dense</div><div class="go-keys">32 keys</div></div>
     </div>
-
     <input class="wizard-input" id="wizardName" type="text" placeholder="Device name (optional)" maxlength="20">
     <button class="wizard-btn" id="wizardBtn" onclick="doRegister()">Connect</button>
     <div class="wizard-error" id="wizardError"></div>
+    <div id="wizardBackRow" style="display:none;margin-top:12px">
+      <button onclick="hideWizard()" style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:0.8rem">← Back</button>
+    </div>
   </div>
 </div>
-
-</div><!-- /wizard-view -->
+</div>
 
 <script>
-  const DECK_SIZES = {
-    '2x3': { rows: 2, cols: 3 },
-    '3x5': { rows: 3, cols: 5 },
-    '4x8': { rows: 4, cols: 8 },
-  };
+// ═══════════════════════════════════════════════════
+// State
+// ═══════════════════════════════════════════════════
+const DECK_SIZES = { '2x3':{rows:2,cols:3}, '3x5':{rows:3,cols:5}, '4x8':{rows:4,cols:8} };
+let currentDeck = '4x8', mode = 'live', sseRetryDelay = 1000;
+let selectedKeyIndex = null, selectedWidgetId = null;
+const visLog = [], VIS_LOG_MAX = 100;
+let selectedGrid = '4x8';
 
-  const DEMO_KEY_DATA = [
-    { index:0, widget_id:'claude-code-main', type:'agent', icon:'🐙', color:'#22c55e', animation:'crawl', label:'Running', badge:null },
-    { index:1, widget_id:'opencode-main', type:'agent', icon:'🦊', color:'#22c55e', animation:'crawl', label:'Busy', badge:null },
-    { index:2, widget_id:'openclaw-main', type:'agent', icon:'🦞', color:'#166534', animation:'none', label:'Idle', badge:null },
-    { index:3, widget_id:'telegram-main', type:'agent', icon:'💬', color:'#6366f1', animation:'pulse', label:'3 new', badge:'3' },
-    { index:28, widget_id:'shortcut-terminal', type:'command', icon:'🖥️', color:'#1e293b', animation:'none', label:'Term', badge:null },
-    { index:29, widget_id:'info-time', type:'system', icon:'⏰', color:'#1e1e2e', animation:'none', label:'Time', badge:null },
-  ];
+// ═══════════════════════════════════════════════════
+// Sidebar sections
+// ═══════════════════════════════════════════════════
+function toggleSec(id) {
+  document.getElementById(id).classList.toggle('collapsed');
+}
 
-  let currentDeck = '4x8';
-  let mode = 'live';
-  let sseRetryDelay = 1000;
-
-  function buildGrid(deckType) {
-    const size = DECK_SIZES[deckType];
-    const grid = document.getElementById('deck');
-    grid.style.gridTemplateColumns = `repeat(${size.cols}, 72px)`;
-    grid.style.gridTemplateRows = `repeat(${size.rows}, 72px)`;
-    grid.innerHTML = '';
-
-    for (let i = 0; i < size.rows * size.cols; i++) {
-      const key = document.createElement('div');
-      key.className = 'key';
-      key.style.backgroundColor = '#111';
-      key.dataset.index = i;
-
-      // Tooltip
-      const tip = document.createElement('span');
-      tip.className = 'tooltip';
-      tip.textContent = `Key ${i}`;
-      key.appendChild(tip);
-
-      key.onclick = (e) => {
-        e.preventDefault();
-        pressKey(i);
-      };
-
-      grid.appendChild(key);
-    }
+// ═══════════════════════════════════════════════════
+// Grid
+// ═══════════════════════════════════════════════════
+function buildGrid(deckType) {
+  const size = DECK_SIZES[deckType], grid = document.getElementById('deck');
+  grid.style.gridTemplateColumns = `repeat(${size.cols}, 72px)`;
+  grid.style.gridTemplateRows = `repeat(${size.rows}, 72px)`;
+  grid.innerHTML = '';
+  for (let i = 0; i < size.rows * size.cols; i++) {
+    const key = document.createElement('div');
+    key.className = 'key'; key.style.backgroundColor = '#111'; key.dataset.index = i;
+    key.onclick = (e) => { e.preventDefault(); onKeyClick(i); };
+    grid.appendChild(key);
   }
+}
 
-  const visLog = [];  // visual timeline entries
-  const VIS_LOG_MAX = 60;
-
-  function updateKeys(keys) {
-    const grid = document.getElementById('deck');
-    // Remove empty-state if present
-    const emptyState = grid.querySelector('.empty-state');
-    if (emptyState && keys.some(k => k.widget_id)) {
-      emptyState.remove();
-    }
-
-    // Record state changes to visual timeline
-    const now = new Date();
-    const ts = now.toTimeString().slice(0,8) + '.' + String(now.getMilliseconds()).padStart(3,'0');
-
-    keys.forEach(k => {
-      if (!k.widget_id) return;
-      const prev = window._lastKeys ? window._lastKeys.find(p => p.index === k.index) : null;
-      const changed = !prev || prev.label !== k.label || prev.color !== k.color || prev.animation !== k.animation || prev.icon !== k.icon;
-      if (changed) {
-        visLog.push({
-          ts, index: k.index, widget_id: k.widget_id,
-          icon: k.icon, color: k.color, animation: k.animation, label: k.label,
-        });
-        if (visLog.length > VIS_LOG_MAX) visLog.shift();
-        // Auto-expand on first events so user sees the timeline
-        const wrap = document.querySelector('.vis-log-wrap');
-        if (wrap && !wrap.open) wrap.open = true;
-      }
-      renderVisLog();
-    });
-
-    keys.forEach(k => {
-      const keyEl = grid.querySelector(`.key[data-index="${k.index}"]`);
-      if (!keyEl) return;
-
-      // Background
-      keyEl.style.backgroundColor = k.color || '#111';
-
-      // Clear content (keep tooltip)
-      const tip = keyEl.querySelector('.tooltip');
-      keyEl.innerHTML = '';
-      if (tip) keyEl.appendChild(tip);
-
-      if (k.widget_id) {
-        // Icon
-        if (k.icon) {
-          const icon = document.createElement('span');
-          icon.className = 'icon';
-          icon.textContent = k.icon;
-          keyEl.appendChild(icon);
-        }
-        // Label
-        if (k.label) {
-          const label = document.createElement('span');
-          label.className = 'label';
-          label.textContent = k.label;
-          keyEl.appendChild(label);
-        }
-        // Badge
-        if (k.badge) {
-          const badge = document.createElement('span');
-          badge.className = 'badge';
-          badge.textContent = k.badge;
-          keyEl.appendChild(badge);
-        }
-        // Tooltip
-        if (tip) {
-          tip.textContent = `${k.widget_id} (${k.type})`;
-          keyEl.appendChild(tip);
-        }
-      }
-
-      // Animation class
-      keyEl.classList.remove('pulse', 'blink', 'crawl', 'progress');
-      if (k.animation && k.animation !== 'none') {
-        keyEl.classList.add(k.animation);
-      }
-    });
+function onKeyClick(i) {
+  if (mode === 'edit' || mode === 'inspect') {
+    selectKey(i);
+    return;
   }
+  pressKey(i);
+}
 
-  function renderVisLog() {
-    const log = document.getElementById('visLog');
-    const count = document.getElementById('visLogCount');
-    count.textContent = visLog.length;
-    // Always render — low cost (30 entries max), ensures timeline
-    // is up-to-date when user expands it
-    log.innerHTML = visLog.slice(-30).reverse().map(e =>
-      '<div class="vis-entry">' +
-        '<span class="ve-ts">' + esc(e.ts) + '</span>' +
-        '<span class="ve-icon">' + esc(e.icon) + '</span>' +
-        '<span class="ve-event"><span class="vis-swatch" style="background:' + esc(e.color) + '"></span>' + esc(e.label) + ' <span style="color:#555">' + esc(e.animation) + '</span></span>' +
-        '<span class="ve-label">' + esc(e.widget_id) + '</span>' +
-      '</div>'
-    ).join('');
-  }
+function selectKey(i) {
+  selectedKeyIndex = i;
+  const lastKeys = window._lastKeys || [];
+  const k = lastKeys.find(k => k.index === i);
+  selectedWidgetId = k ? k.widget_id : null;
 
-  function changeDeck() {
-    currentDeck = document.getElementById('deckType').value;
-    buildGrid(currentDeck);
-    // Re-render with last known data or demo
-    const lastData = window._lastKeys || DEMO_KEY_DATA;
-    updateKeys(lastData);
-  }
+  // Highlight
+  document.querySelectorAll('.key.selected').forEach(el => el.classList.remove('selected'));
+  const keyEl = document.querySelector(`.key[data-index="${i}"]`);
+  if (keyEl) keyEl.classList.add('selected');
 
-  function toggleMode() {
-    const btn = document.getElementById('btnMode');
-    if (mode === 'live') {
-      mode = 'edit';
-      btn.textContent = '✏️ Inspect';
-      btn.classList.remove('active');
-      document.getElementById('log').textContent = 'Edit mode — click a key to inspect widget';
-    } else {
-      mode = 'live';
-      btn.textContent = '🔍 Live';
-      btn.classList.add('active');
-      hideInspector();
-      document.getElementById('log').textContent = 'Live mode';
-    }
-  }
+  updateInspector(i, k);
+  document.getElementById('app').classList.remove('noright');
+}
 
-  function resetDeck() {
-    const grid = document.getElementById('deck');
-    grid.querySelectorAll('.key').forEach(k => {
-      k.style.backgroundColor = '#111';
-      k.classList.remove('pulse', 'blink', 'crawl', 'progress');
-      k.innerHTML = '<span class="tooltip">Key ' + k.dataset.index + '</span>';
-    });
-    document.getElementById('log').textContent = '🔄 Deck reset';
-  }
+function deselectWidget() {
+  selectedKeyIndex = null; selectedWidgetId = null;
+  document.querySelectorAll('.key.selected').forEach(el => el.classList.remove('selected'));
+  document.getElementById('app').classList.add('noright');
+}
 
-  // ── Keyboard shortcuts ────────────────────────
+function updateKeys(keys) {
+  const grid = document.getElementById('deck');
+  const emptyState = grid.querySelector('.empty-state');
+  if (emptyState && keys.some(k => k.widget_id)) emptyState.remove();
 
-  document.addEventListener('keydown', (e) => {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  const now = new Date();
+  const ts = now.toTimeString().slice(0,8) + '.' + String(now.getMilliseconds()).padStart(3,'0');
 
-    if (e.key >= '0' && e.key <= '9') {
-      pressKey(parseInt(e.key));
-    } else if (e.key === 'r' || e.key === 'R') {
-      resetDeck();
-    } else if (e.key === 'm' || e.key === 'M') {
-      toggleMode();
+  keys.forEach(k => {
+    if (!k.widget_id) return;
+    const prev = window._lastKeys ? window._lastKeys.find(p => p.index === k.index) : null;
+    if (!prev || prev.label !== k.label || prev.color !== k.color || prev.animation !== k.animation || prev.icon !== k.icon) {
+      visLog.push({ ts, index:k.index, widget_id:k.widget_id, icon:k.icon, color:k.color, animation:k.animation, label:k.label });
+      if (visLog.length > VIS_LOG_MAX) visLog.shift();
+      renderLogs();
     }
   });
 
-  // ── Token & Routing ────────────────────────────
-
-  function getToken() {
-    const params = new URLSearchParams(window.location.search);
-    return params.get('token') || localStorage.getItem('vibedeck_token') || '';
-  }
-
-  function saveToken(t) {
-    localStorage.setItem('vibedeck_token', t);
-    const url = new URL(window.location);
-    url.searchParams.set('token', t);
-    window.history.replaceState({}, '', url);
-  }
-
-  let selectedGrid = '4x8';
-
-  function selectGrid(el) {
-    document.querySelectorAll('.grid-option').forEach(o => o.classList.remove('selected'));
-    el.classList.add('selected');
-    selectedGrid = el.dataset.grid;
-  }
-
-  async function doRegister() {
-    const btn = document.getElementById('wizardBtn');
-    const err = document.getElementById('wizardError');
-    const name = document.getElementById('wizardName').value.trim() || 'My Terminal';
-    const existingToken = getToken();
-    const isAddingFromApp = !!existingToken;
-    btn.disabled = true;
-    btn.textContent = 'Connecting...';
-    err.textContent = '';
-
-    try {
-      const resp = await fetch('/api/terminal/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, grid: selectedGrid, type: 'virtual' }),
-      });
-      const data = await resp.json();
-      if (resp.ok && data.terminal) {
-        if (isAddingFromApp) {
-          // Adding from within app — go back to terminal list
-          hideWizard();
-          document.getElementById('log').textContent = '✅ Terminal "' + name + '" registered';
-        } else {
-          // Initial setup — switch to the new terminal
-          saveToken(data.terminal.token);
-          showApp(data.terminal.grid, data.terminal.name);
-        }
-      } else {
-        err.textContent = data.error || 'Registration failed';
-      }
-    } catch (e) {
-      err.textContent = 'Connection failed. Is the daemon running?';
+  keys.forEach(k => {
+    const keyEl = grid.querySelector(`.key[data-index="${k.index}"]`);
+    if (!keyEl) return;
+    keyEl.style.backgroundColor = k.color || '#111';
+    keyEl.innerHTML = '';
+    if (k.widget_id) {
+      if (k.icon) { const icon = document.createElement('span'); icon.className='icon'; icon.textContent=k.icon; keyEl.appendChild(icon); }
+      if (k.label) { const label = document.createElement('span'); label.className='label'; label.textContent=k.label; keyEl.appendChild(label); }
+      if (k.badge) { const badge = document.createElement('span'); badge.className='badge'; badge.textContent=k.badge; keyEl.appendChild(badge); }
     }
-    btn.disabled = false;
-    btn.textContent = 'Connect';
+    keyEl.classList.remove('pulse','blink','crawl','progress');
+    if (k.animation && k.animation !== 'none') keyEl.classList.add(k.animation);
+  });
+
+  // Update inspector if the selected key changed
+  if (selectedKeyIndex != null) {
+    const sk = keys.find(k => k.index === selectedKeyIndex);
+    updateInspector(selectedKeyIndex, sk || null);
+  }
+}
+
+function changeDeck() {
+  currentDeck = document.getElementById('deckType').value;
+  buildGrid(currentDeck);
+  if (window._lastKeys) updateKeys(window._lastKeys);
+}
+
+// ═══════════════════════════════════════════════════
+// Right sidebar — Widget Inspector
+// ═══════════════════════════════════════════════════
+function updateInspector(keyIdx, k) {
+  const empty = document.getElementById('inspEmpty');
+  const body = document.getElementById('inspBody');
+
+  if (!k || !k.widget_id) {
+    empty.style.display = ''; body.style.display = 'none';
+    return;
+  }
+  empty.style.display = 'none'; body.style.display = '';
+
+  document.getElementById('inspId').textContent = k.widget_id;
+  document.getElementById('inspType').textContent = k.type || 'agent';
+  document.getElementById('inspKey').textContent = keyIdx;
+  document.getElementById('inspIcon').value = k.icon || '';
+  document.getElementById('inspColor').value = k.color || '#000000';
+  document.getElementById('inspColorHex').textContent = k.color || '#000000';
+  document.getElementById('inspAnim').value = k.animation || 'none';
+  document.getElementById('inspLabel').value = k.label || '';
+
+  const badgeRow = document.getElementById('inspBadgeRow');
+  if (k.badge) { badgeRow.style.display = ''; document.getElementById('inspBadge').textContent = k.badge; }
+  else badgeRow.style.display = 'none';
+
+  if (window._widgetMeta && window._widgetMeta[k.widget_id]) {
+    document.getElementById('inspMeta').textContent = JSON.stringify(window._widgetMeta[k.widget_id], null, 2);
+  } else {
+    document.getElementById('inspMeta').textContent = '—';
   }
 
-  function showApp(grid, name) {
-    document.getElementById('wizard-view').style.display = 'none';
-    document.getElementById('app-view').style.display = '';
-    if (name) {
-      document.getElementById('headerName').textContent = name + ' — Virtual Terminal';
-    }
-    // Set deck type dropdown to match grid
-    const sel = document.getElementById('deckType');
-    if (grid) {
-      for (let o of sel.options) {
-        if (o.value === grid) { o.selected = true; break; }
-      }
-    }
-    changeDeck();
-    connectSSE();
+  document.getElementById('app').classList.remove('noright');
+}
+
+function updateInspectedWidget() {
+  if (selectedKeyIndex == null || !selectedWidgetId) return;
+  const icon = document.getElementById('inspIcon').value;
+  const color = document.getElementById('inspColor').value;
+  const animation = document.getElementById('inspAnim').value;
+  const label = document.getElementById('inspLabel').value;
+  document.getElementById('inspColorHex').textContent = color;
+
+  // Update local cache
+  const keys = window._lastKeys || [];
+  const k = keys.find(k => k.index === selectedKeyIndex);
+  if (k) {
+    k.icon = icon; k.color = color; k.animation = animation; k.label = label;
+    updateKeys(keys);
   }
+}
 
-  // ── Check token on load ────────────────────────
+// ═══════════════════════════════════════════════════
+// Logs panel
+// ═══════════════════════════════════════════════════
+function renderLogs() {
+  const body = document.getElementById('logBody');
+  const count = document.getElementById('logCount');
+  count.textContent = visLog.length;
+  body.innerHTML = visLog.slice(-40).reverse().map(e =>
+    '<div class="log-entry evt">' +
+      '<span style="color:#555">' + esc(e.ts) + '</span> ' +
+      esc(e.icon) + ' ' + esc(e.label) +
+      ' <span style="color:#444">' + esc(e.widget_id) + '</span>' +
+    '</div>'
+  ).join('') || '<div class="log-entry ts">Waiting for events...</div>';
+}
 
-  async function init() {
-    const token = getToken();
-    if (!token) {
-      document.getElementById('wizard-view').style.display = '';
-      document.getElementById('log').textContent = 'Ready — click a key or press 0-9';
+// ═══════════════════════════════════════════════════
+// Terminal list in sidebar
+// ═══════════════════════════════════════════════════
+async function loadTerminalList() {
+  const el = document.getElementById('terminalList');
+  try {
+    const resp = await fetch('/api/terminals');
+    if (!resp.ok) { el.innerHTML = '<p style="color:var(--text-dim);font-size:0.68rem">Daemon offline</p>'; return; }
+    const data = await resp.json();
+    const terminals = data.terminals || [];
+    const currentToken = getToken();
+    if (terminals.length === 0) {
+      el.innerHTML = '<p style="color:var(--text-dim);font-size:0.68rem">No terminals</p>';
       return;
     }
-
-    try {
-      const resp = await fetch('/api/terminal/status?token=' + token);
-      if (resp.ok) {
-        const data = await resp.json();
-        showApp(data.terminal.grid, data.terminal.name);
-      } else {
-        document.getElementById('wizard-view').style.display = '';
-        document.getElementById('wizardName').placeholder = 'My Terminal';
-      }
-    } catch (e) {
-      document.getElementById('wizard-view').style.display = '';
-    }
-  }
-
-  // ── SSE Connection (token-authenticated) ──────
-
-  function connectSSE() {
-    const statusDot = document.getElementById('statusDot');
-    const statusLabel = document.getElementById('statusLabel');
-    const token = getToken();
-
-    const es = new EventSource('/api/events?token=' + token);
-    let connected = false;
-
-    es.onopen = () => {
-      connected = true;
-      sseRetryDelay = 1000;
-      statusDot.className = 'status-dot online';
-      statusLabel.textContent = 'Live';
-
-      setTimeout(() => {
-        if (!window._lastKeys) {
-          statusLabel.textContent = 'Demo (no daemon frames)';
-          updateKeys(DEMO_KEY_DATA);
-        }
-      }, 3000);
-    };
-
-    es.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'frame') {
-          window._lastKeys = data.keys;
-          updateKeys(data.keys);
-          statusDot.className = 'status-dot online';
-          statusLabel.textContent = 'Live';
-        }
-      } catch(e) {}
-    };
-
-    es.onerror = () => {
-      if (connected) {
-        statusDot.className = 'status-dot offline';
-        statusLabel.textContent = 'Disconnected';
-        connected = false;
-      }
-      es.close();
-      setTimeout(connectSSE, Math.min(sseRetryDelay, 30000));
-      sseRetryDelay *= 2;
-    };
-  }
-
-  // ── Key press (token-authenticated) ───────────
-
-  function pressKey(i) {
-    const token = getToken();
-    const log = document.getElementById('log');
-
-    if (mode === 'edit') {
-      const keyEl = document.querySelector('.key[data-index="' + i + '"]');
-      if (keyEl) {
-        const rect = keyEl.getBoundingClientRect();
-        showInspector(i, rect.right, rect.top);
-      }
-      return;
-    }
-
-    log.textContent = '🖱 Key ' + i + ' pressed';
-    log.style.color = 'var(--accent)';
-    setTimeout(() => { log.style.color = 'var(--text-dim)'; }, 600);
-    fetch('/api/key/' + i + '?token=' + token, { method: 'POST' }).catch(() => {});
-  }
-
-  // ── Init ──────────────────────────────────────
-
-  init();
-
-  // Show demo keys immediately while connecting
-  setTimeout(() => {
-    const appView = document.getElementById('app-view');
-    if (appView.style.display !== 'none' && !window._lastKeys) {
-      updateKeys(DEMO_KEY_DATA);
-      document.getElementById('statusLabel').textContent = 'Demo mode';
-      document.getElementById('statusDot').className = 'status-dot waiting';
-    }
-  }, 1500);
-
-  document.getElementById('log').textContent = 'Ready — click a key or press 0-9';
-
-  // ── Visual timeline toggle ─────────────────────
-
-  document.querySelector('.vis-log-wrap').addEventListener('toggle', () => {
-    renderVisLog();
-  });
-
-  // ── Modal helpers ──────────────────────────────
-
-  function closeModal(id) {
-    document.getElementById(id).style.display = 'none';
-  }
-
-  // Close modals on backdrop click
-  document.addEventListener('click', (e) => {
-    if (e.target.classList.contains('modal')) {
-      e.target.style.display = 'none';
-    }
-  });
-
-  // ── Key Inspector ──────────────────────────────
-
-  function showInspector(keyIdx, x, y) {
-    const insp = document.getElementById('keyInspector');
-    document.getElementById('inspKeyIdx').textContent = 'Key ' + keyIdx;
-    const body = document.getElementById('inspBody');
-
-    const lastKeys = window._lastKeys;
-    if (!lastKeys) {
-      body.innerHTML = '<p class="dim">No data</p>';
-    } else {
-      const k = lastKeys.find(k => k.index === keyIdx);
-      if (!k || !k.widget_id) {
-        body.innerHTML = '<p class="dim">Empty key</p>';
-      } else {
-        body.innerHTML =
-          '<div class="insp-label">Widget</div><div class="insp-val">' + esc(k.widget_id) + ' (' + esc(k.type) + ')</div>' +
-          '<div class="insp-label">Icon & Color</div><div class="insp-val"><span class="insp-swatch" style="background:' + esc(k.color) + '"></span>' + esc(k.icon || '(none)') + ' ' + esc(k.color) + '</div>' +
-          '<div class="insp-label">Animation</div><div class="insp-val">' + esc(k.animation) + '</div>' +
-          '<div class="insp-label">Label</div><div class="insp-val">' + esc(k.label || '(none)') + '</div>' +
-          (k.badge ? '<div class="insp-label">Badge</div><div class="insp-val">' + esc(k.badge) + '</div>' : '');
-      }
-    }
-
-    insp.style.display = '';
-    insp.style.left = Math.min(x + 10, window.innerWidth - 290) + 'px';
-    insp.style.top = Math.min(y + 10, window.innerHeight - 260) + 'px';
-  }
-
-  function hideInspector() {
-    document.getElementById('keyInspector').style.display = 'none';
-  }
-
-  function esc(s) { return (s || '').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
-
-  // ── Visual Config Editor ────────────────────────
-
-  async function showVisualConfig() {
-    document.getElementById('visualModal').style.display = '';
-    const body = document.getElementById('visualBody');
-    body.innerHTML = '<p class="dim">Loading...</p>';
-    try {
-      const resp = await fetch('/api/appearance');
-      const data = await resp.json();
-      if (!data.events) throw new Error('no events');
-      const events = data.events;
-      body.innerHTML = Object.keys(events).sort().map(name => {
-        const e = events[name];
-        return '<div class="evt-row">' +
-          '<span class="evt-name">' + esc(name) + '</span>' +
-          '<input type="text" value="' + esc(e.icon) + '" data-ev="' + esc(name) + '" data-f="icon" maxlength="4">' +
-          '<input type="color" value="' + esc(e.color) + '" data-ev="' + esc(name) + '" data-f="color" title="Color">' +
-          '<select data-ev="' + esc(name) + '" data-f="animation">' +
-            ['none','pulse','crawl','blink','progress'].map(a =>
-              '<option' + (e.animation === a ? ' selected' : '') + '>' + a + '</option>').join('') +
-          '</select>' +
-          '<input type="text" value="' + esc(e.label) + '" data-ev="' + esc(name) + '" data-f="label" maxlength="12">' +
-        '</div>';
-      }).join('');
-    } catch (e) {
-      body.innerHTML = '<p class="dim">Failed to load appearance config</p>';
-    }
-  }
-
-  async function saveAppearance() {
-    const events = {};
-    document.querySelectorAll('#visualBody [data-ev]').forEach(el => {
-      const ev = el.dataset.ev;
-      if (!events[ev]) events[ev] = { icon: '', color: '#000000', animation: 'none', label: '' };
-      events[ev][el.dataset.f] = el.value;
-    });
-    try {
-      const resp = await fetch('/api/appearance', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ events }),
-      });
-      if (resp.ok) {
-        closeModal('visualModal');
-        document.getElementById('log').textContent = '✅ Appearance saved — restart daemon to reload';
-      } else {
-        document.getElementById('log').textContent = '❌ Save failed';
-      }
-    } catch (e) {
-      document.getElementById('log').textContent = '❌ Connection error';
-    }
-  }
-
-  // ── Theme Editor ───────────────────────────────
-
-  const THEME_VARS = ['--bg','--panel','--surface','--border','--text','--text-dim','--accent','--danger','--warn','--info'];
-
-  async function showThemeEditor() {
-    document.getElementById('themeModal').style.display = '';
-    const body = document.getElementById('themeBody');
-    const rs = getComputedStyle(document.documentElement);
-    body.innerHTML = THEME_VARS.map(v => {
-      const val = rs.getPropertyValue(v).trim();
-      return '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:0.8rem">' +
-        '<span style="min-width:80px;color:var(--text)">' + esc(v) + '</span>' +
-        '<input type="color" value="' + esc(val) + '" data-var="' + esc(v) + '" style="width:32px;height:28px">' +
-        '<input type="text" value="' + esc(val) + '" data-txt="' + esc(v) + '" style="flex:1;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:3px 6px;border-radius:5px;font-size:0.78rem">' +
+    el.innerHTML = terminals.map(t => {
+      const active = (t.token && t.token === currentToken) ? ' active' : '';
+      const dotCls = t.widget_count > 0 ? 'active-dot' : 'idle-dot';
+      const label = t.id === 'default' ? (getToken() ? 'Web Viewer' : t.name) : t.name;
+      return '<div class="term-item' + active + '" onclick="switchToTerminal(\'' + esc(t.token||'') + '\',\'' + esc(t.grid) + '\',\'' + esc(t.name) + '\')" title="' + esc(label) + '">' +
+        '<span class="term-dot ' + dotCls + '"></span>' +
+        '<span class="term-name">' + esc(label) + '</span>' +
+        '<span class="term-grid">' + esc(t.grid) + '</span>' +
       '</div>';
     }).join('');
-    // Sync color ↔ text
-    body.querySelectorAll('input[type=color]').forEach(c => {
-      const txt = body.querySelector('input[data-txt="' + c.dataset.var + '"]');
-      c.oninput = () => { txt.value = c.value; };
-      txt.oninput = () => { c.value = txt.value; };
+  } catch(e) {
+    el.innerHTML = '<p style="color:var(--text-dim);font-size:0.68rem">Daemon offline</p>';
+  }
+}
+
+function switchToTerminal(token, grid, name) {
+  if (token) { saveToken(token); showApp(grid, name); }
+}
+
+// ═══════════════════════════════════════════════════
+// Mode toggle
+// ═══════════════════════════════════════════════════
+function toggleMode() {
+  const btn = document.getElementById('btnMode');
+  if (mode === 'live') {
+    mode = 'inspect'; btn.textContent = '🔍 Inspect'; btn.classList.remove('active');
+  } else {
+    mode = 'live'; btn.textContent = '🔍 Live'; btn.classList.add('active');
+    deselectWidget();
+  }
+}
+
+// ═══════════════════════════════════════════════════
+// SSE Connection
+// ═══════════════════════════════════════════════════
+function connectSSE() {
+  const statusDot = document.getElementById('statusDot');
+  const statusLabel = document.getElementById('statusLabel');
+  const token = getToken();
+  const es = new EventSource('/api/events?token=' + token);
+  let connected = false;
+
+  es.onopen = () => {
+    connected = true; sseRetryDelay = 1000;
+    statusDot.className = 'status-dot online';
+    statusLabel.textContent = 'Live';
+    statusLabel.style.color = 'var(--accent)';
+    loadTerminalList();
+    setTimeout(() => { if (!window._lastKeys) { statusLabel.textContent = 'Waiting for agent...'; statusLabel.style.color = 'var(--warn)'; } }, 3000);
+  };
+
+  es.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      if (data.type === 'frame') {
+        window._lastKeys = data.keys;
+        // Cache meta from the frame if available
+        if (data._meta) window._widgetMeta = data._meta;
+        updateKeys(data.keys);
+        statusDot.className = 'status-dot online';
+        statusLabel.textContent = 'Live';
+        statusLabel.style.color = 'var(--accent)';
+        document.getElementById('headerName').textContent = data.display_name || '';
+      }
+    } catch(e) {}
+  };
+
+  es.onerror = () => {
+    if (connected) {
+      statusDot.className = 'status-dot offline';
+      statusLabel.textContent = 'Disconnected'; statusLabel.style.color = 'var(--danger)';
+      connected = false;
+    }
+    es.close();
+    setTimeout(connectSSE, Math.min(sseRetryDelay, 30000));
+    sseRetryDelay *= 2;
+  };
+}
+
+// ═══════════════════════════════════════════════════
+// Key press
+// ═══════════════════════════════════════════════════
+function pressKey(i) {
+  const token = getToken();
+  fetch('/api/key/' + i + '?token=' + token, { method: 'POST' }).catch(() => {});
+}
+
+// ═══════════════════════════════════════════════════
+// Token & Routing
+// ═══════════════════════════════════════════════════
+function getToken() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('token') || localStorage.getItem('vibedeck_token') || '';
+}
+function saveToken(t) {
+  localStorage.setItem('vibedeck_token', t);
+  const url = new URL(window.location);
+  url.searchParams.set('token', t);
+  window.history.replaceState({}, '', url);
+}
+
+// ═══════════════════════════════════════════════════
+// Wizard
+// ═══════════════════════════════════════════════════
+function selectGrid(el) {
+  document.querySelectorAll('.grid-option').forEach(o => o.classList.remove('selected'));
+  el.classList.add('selected');
+  selectedGrid = el.dataset.grid;
+}
+
+function showWizard() {
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('wizard-view').style.display = '';
+  const hasToken = !!getToken();
+  document.getElementById('wizardBackRow').style.display = hasToken ? '' : 'none';
+}
+
+function hideWizard() {
+  document.getElementById('wizard-view').style.display = 'none';
+  document.getElementById('app').style.display = '';
+  loadTerminalList();
+}
+
+async function doRegister() {
+  const btn = document.getElementById('wizardBtn');
+  const err = document.getElementById('wizardError');
+  const name = document.getElementById('wizardName').value.trim() || 'My Terminal';
+  const existingToken = getToken();
+  const isAddingFromApp = !!existingToken;
+  btn.disabled = true; btn.textContent = 'Connecting...'; err.textContent = '';
+
+  try {
+    const resp = await fetch('/api/terminal/register', {
+      method: 'POST', headers: { 'Content-Type':'application/json' },
+      body: JSON.stringify({ name, grid: selectedGrid, type:'virtual' }),
     });
-  }
+    const data = await resp.json();
+    if (resp.ok && data.terminal) {
+      if (isAddingFromApp) { hideWizard(); }
+      else { saveToken(data.terminal.token); showApp(data.terminal.grid, data.terminal.name); }
+    } else { err.textContent = data.error || 'Registration failed'; }
+  } catch(e) { err.textContent = 'Connection failed. Is the daemon running?'; }
+  btn.disabled = false; btn.textContent = 'Connect';
+}
 
-  async function saveTheme() {
-    let css = ':root {\n';
-    document.querySelectorAll('#themeBody input[type=text]').forEach(txt => {
-      css += '  ' + txt.dataset.txt + ': ' + txt.value + ';\n';
-    });
-    css += '}';
-    try {
-      const resp = await fetch('/api/theme', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ css }),
-      });
-      if (resp.ok) {
-        // Apply immediately
-        document.querySelectorAll('#themeBody input[type=text]').forEach(txt => {
-          document.documentElement.style.setProperty(txt.dataset.txt, txt.value);
-        });
-        closeModal('themeModal');
-        document.getElementById('log').textContent = '✅ Theme saved & applied';
-      }
-    } catch (e) {
-      document.getElementById('log').textContent = '❌ Connection error';
-    }
-  }
+function showApp(grid, name) {
+  document.getElementById('wizard-view').style.display = 'none';
+  document.getElementById('app').style.display = '';
+  if (name) document.getElementById('headerName').textContent = name;
+  const sel = document.getElementById('deckType');
+  if (grid) { for (let o of sel.options) { if (o.value === grid) { o.selected = true; break; } } }
+  changeDeck();
+  connectSSE();
+  loadTerminalList();
+}
 
-  // ── Layout Save / Load ─────────────────────────
-
-  function showSaveDialog() {
-    document.getElementById('saveModal').style.display = '';
-    document.getElementById('saveName').value = '';
-    document.getElementById('saveName').focus();
-  }
-
-  async function saveLayout() {
-    const name = document.getElementById('saveName').value.trim();
-    if (!name) return;
-    const token = getToken();
-    try {
-      const resp = await fetch('/api/layouts/save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, terminal_id: 'default' }),
-      });
-      if (resp.ok) {
-        closeModal('saveModal');
-        document.getElementById('log').textContent = '✅ Layout "' + name + '" saved';
-      } else {
-        document.getElementById('log').textContent = '❌ Save failed';
-      }
-    } catch (e) {
-      document.getElementById('log').textContent = '❌ Connection error';
-    }
-  }
-
-  async function showLoadDialog() {
-    document.getElementById('loadModal').style.display = '';
-    const list = document.getElementById('loadList');
-    list.innerHTML = '<p class="dim">Loading...</p>';
-    try {
-      const resp = await fetch('/api/layouts');
-      const data = await resp.json();
-      const layouts = data.layouts || [];
-      if (layouts.length === 0) {
-        list.innerHTML = '<p class="dim">No saved layouts</p>';
-      } else {
-        list.innerHTML = layouts.map(l =>
-          '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.04)">' +
-            '<span style="font-size:0.85rem">' + esc(l.name) + '</span>' +
-            '<button onclick="loadLayoutByName(\'' + esc(l.name) + '\')" style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:5px;padding:4px 10px;cursor:pointer;font-size:0.75rem">Load</button>' +
-          '</div>'
-        ).join('');
-      }
-    } catch (e) {
-      list.innerHTML = '<p class="dim">Failed to load layouts</p>';
-    }
-  }
-
-  async function loadLayoutByName(name) {
-    try {
-      const resp = await fetch('/api/layouts/load', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, terminal_id: 'default' }),
-      });
-      if (resp.ok) {
-        closeModal('loadModal');
-        document.getElementById('log').textContent = '✅ Layout "' + name + '" loaded — refresh to see changes';
-      } else {
-        document.getElementById('log').textContent = '❌ Load failed';
-      }
-    } catch (e) {
-      document.getElementById('log').textContent = '❌ Connection error';
-    }
-  }
-
-  // ── Terminal management ────────────────────────
-
-  async function showTerminalList() {
-    document.getElementById('terminalListModal').style.display = '';
-    const body = document.getElementById('terminalListBody');
-    body.innerHTML = '<p class="dim">Loading...</p>';
-
-    try {
-      const resp = await fetch('/api/terminals');
-      if (!resp.ok) {
-        body.innerHTML = '<p class="dim">API error (HTTP ' + resp.status + ').<br>Try restarting the daemon: <code>vibe-deck serve</code></p>';
-        return;
-      }
-      const data = await resp.json();
-      const terminals = data.terminals || [];
-
-      // Always show the current web session at the top, even if
-      // it isn't a registered terminal in the registry (yet).
-      const currentToken = getToken();
-      let currentTerminal = null;
-      if (currentToken) {
-        currentTerminal = terminals.find(t => t.token === currentToken);
-        // If the current session doesn't match any registry terminal
-        // (e.g. viewing default physical terminal), synthesize one.
-        if (!currentTerminal) {
-          const defaultT = terminals.find(t => t.id === 'default');
-          if (defaultT) {
-            currentTerminal = { ...defaultT, _isDefault: true };
-          }
-        }
-      }
-
-      let html = '';
-
-      // ── Current session banner ──
-      if (currentTerminal) {
-        html += '<div style="background:var(--surface);border:1px solid var(--accent);border-radius:8px;padding:10px 14px;margin-bottom:12px">' +
-          '<div style="font-size:0.7rem;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px">👆 You are viewing</div>' +
-          '<div style="font-size:0.9rem;font-weight:600;margin-top:2px">' +
-            esc(currentTerminal.name) +
-            ' <span style="font-size:0.65rem;background:var(--accent);color:#000;padding:1px 6px;border-radius:3px">' +
-              (currentTerminal._isDefault ? 'web viewer' : 'virtual') +
-            '</span>' +
-          '</div>' +
-          '<div style="font-size:0.7rem;color:var(--text-dim);margin-top:2px">' +
-            'Grid: ' + esc(currentTerminal.grid) + ' · ' +
-            (currentTerminal.widget_count || 0) + ' widgets' +
-            (currentTerminal._isDefault ? ' · This is the built-in default terminal shown when no virtual terminal is connected' : '') +
-          '</div>' +
-          (currentTerminal.token ? '<div style="margin-top:6px">' +
-            '<button onclick="copyTerminalLink(\'' + esc(currentTerminal.token) + '\', \'' + esc(currentTerminal.name) + '\')" style="background:var(--accent);color:#000;border:none;border-radius:5px;padding:4px 10px;cursor:pointer;font-size:0.7rem;font-weight:600">📋 Copy link to share this view</button>' +
-          '</div>' : '') +
-        '</div>';
-      } else {
-        // No token at all — user is in setup / hasn't registered
-        html += '<div style="background:var(--surface);border:1px solid var(--warn);border-radius:8px;padding:10px 14px;margin-bottom:12px">' +
-          '<div style="font-size:0.8rem;color:var(--warn)">⚠️ Not connected to any terminal.<br>Use <strong>＋ Connect New Device</strong> below to create one.</div>' +
-        '</div>';
-      }
-
-      // ── All terminals ──
-      if (terminals.length === 0) {
-        html += '<p class="dim">No terminals registered yet.</p>';
-      } else {
-        const otherTerminals = terminals.filter(t => {
-          // Don't duplicate the current session
-          if (currentTerminal && !currentTerminal._isDefault) return t.token !== currentToken;
-          if (currentTerminal && currentTerminal._isDefault && t.id === 'default') return false;
-          return true;
-        });
-
-        if (otherTerminals.length > 0) {
-          html += '<div style="font-size:0.7rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">All registered terminals</div>';
-          html += otherTerminals.map(t => {
-            const statusIcon = t.widget_count > 0 ? '🟢' : '⚫';
-            const typeBadge = t.type === 'physical'
-              ? '<span style="font-size:0.6rem;background:var(--info);color:#fff;padding:1px 5px;border-radius:3px">physical</span>'
-              : '<span style="font-size:0.6rem;background:var(--accent);color:#000;padding:1px 5px;border-radius:3px">virtual</span>';
-            const copyBtn = t.token
-              ? '<button onclick="copyTerminalLink(\'' + esc(t.token) + '\', \'' + esc(t.name) + '\')" style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:5px;padding:3px 8px;cursor:pointer;font-size:0.7rem" title="Copy connection link">📋 Link</button>'
-              : '';
-            const switchBtn = t.token
-              ? '<button onclick="switchToTerminal(\'' + esc(t.token) + '\', \'' + esc(t.grid) + '\', \'' + esc(t.name) + '\')" style="background:var(--info);color:#fff;border:none;border-radius:5px;padding:3px 8px;cursor:pointer;font-size:0.7rem;margin-left:4px">↗ View</button>'
-              : '';
-            return '<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.04)">' +
-              '<div style="flex:1">' +
-                '<div style="display:flex;align-items:center;gap:6px">' +
-                  '<span style="font-size:0.9rem">' + statusIcon + '</span>' +
-                  '<strong style="font-size:0.82rem">' + esc(t.name) + '</strong>' +
-                  typeBadge +
-                '</div>' +
-                '<div style="font-size:0.68rem;color:var(--text-dim);margin-top:2px">' +
-                  'Grid: ' + esc(t.grid) + ' · ' + t.widget_count + ' widgets' +
-                  (t.id === 'default' ? ' · built-in' : ' · <code style="font-size:0.6rem">' + esc(t.id.slice(0,8)) + '</code>') +
-                '</div>' +
-              '</div>' +
-              '<div style="display:flex;gap:4px;flex-shrink:0">' + copyBtn + switchBtn + '</div>' +
-            '</div>';
-          }).join('');
-        }
-      }
-
-      body.innerHTML = html;
-
-      // If API returned empty (old daemon?), add a hint
-      if (terminals.length === 0) {
-        body.innerHTML += '<p class="dim" style="margin-top:12px;font-size:0.7rem">If you just updated VibeDeck, restart the daemon:<br><code>vibe-deck serve</code></p>';
-      }
-    } catch (e) {
-      body.innerHTML = '<div style="text-align:center;padding:20px">' +
-        '<p style="color:var(--danger);font-size:0.9rem;margin-bottom:8px">⚠️ Failed to load terminals</p>' +
-        '<p class="dim" style="font-size:0.75rem">The daemon may be running an older version.</p>' +
-        '<p class="dim" style="font-size:0.75rem"><strong>Restart the daemon:</strong></p>' +
-        '<code style="font-size:0.75rem;background:var(--surface);padding:4px 10px;border-radius:4px">vibe-deck serve</code>' +
-      '</div>';
-    }
-  }
-
-  function copyTerminalLink(token, name) {
-    const url = window.location.origin + window.location.pathname + '?token=' + token;
-    navigator.clipboard.writeText(url).then(() => {
-      const log = document.getElementById('log');
-      log.textContent = '📋 Link for "' + name + '" copied to clipboard';
-      log.style.color = 'var(--accent)';
-      setTimeout(() => { log.style.color = 'var(--text-dim)'; }, 2000);
-    }).catch(() => {
-      // Fallback for non-HTTPS
-      const ta = document.createElement('textarea');
-      ta.value = url;
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      document.body.removeChild(ta);
-      document.getElementById('log').textContent = '📋 Link copied!';
-    });
-  }
-
-  function switchToTerminal(token, grid, name) {
-    saveToken(token);
-    closeModal('terminalListModal');
-    showApp(grid, name);
-  }
-
-  function showWizard() {
-    // Show wizard in "add terminal" mode — adds a back link
-    document.getElementById('app-view').style.display = 'none';
+// ═══════════════════════════════════════════════════
+// Init
+// ═══════════════════════════════════════════════════
+async function init() {
+  const token = getToken();
+  if (!token) {
+    document.getElementById('app').style.display = 'none';
     document.getElementById('wizard-view').style.display = '';
-
-    // Add back button if not already there
-    let backRow = document.getElementById('wizardBackRow');
-    if (!backRow) {
-      backRow = document.createElement('div');
-      backRow.id = 'wizardBackRow';
-      backRow.style.cssText = 'margin-bottom:16px;text-align:left';
-      backRow.innerHTML = '<button onclick="hideWizard()" style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:0.8rem">← Back to Terminals</button>';
-      const card = document.querySelector('.wizard-card');
-      if (card) card.insertBefore(backRow, card.firstChild);
-    }
+    return;
   }
-
-  function hideWizard() {
-    document.getElementById('wizard-view').style.display = 'none';
-    document.getElementById('app-view').style.display = '';
-    // Remove back button for next time
-    const backRow = document.getElementById('wizardBackRow');
-    if (backRow) backRow.remove();
-    showTerminalList();
-  }
-
-  // ── Close inspector on outside click ───────────
-
-  document.addEventListener('click', (e) => {
-    const insp = document.getElementById('keyInspector');
-    if (insp.style.display !== 'none' && !insp.contains(e.target) && !e.target.closest('.key')) {
-      hideInspector();
+  try {
+    const resp = await fetch('/api/terminal/status?token=' + token);
+    if (resp.ok) {
+      const data = await resp.json();
+      showApp(data.terminal.grid, data.terminal.name);
+    } else {
+      document.getElementById('app').style.display = 'none';
+      document.getElementById('wizard-view').style.display = '';
     }
+  } catch(e) {
+    document.getElementById('app').style.display = 'none';
+    document.getElementById('wizard-view').style.display = '';
+  }
+}
+
+init();
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+  if (e.key >= '0' && e.key <= '9') { onKeyClick(parseInt(e.key)); }
+  else if (e.key === 'm' || e.key === 'M') { toggleMode(); }
+  else if (e.key === 'Escape') { deselectWidget(); }
+});
+
+// ═══════════════════════════════════════════════════
+// Modal helpers
+// ═══════════════════════════════════════════════════
+function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+document.addEventListener('click', (e) => { if (e.target.classList.contains('modal')) e.target.style.display = 'none'; });
+function esc(s) { return (s||'').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ═══════════════════════════════════════════════════
+// Visual Config (Appearance)
+// ═══════════════════════════════════════════════════
+async function showVisualConfig() {
+  document.getElementById('visualModal').style.display = '';
+  const body = document.getElementById('visualBody');
+  body.innerHTML = '<p class="dim">Loading...</p>';
+  try {
+    const resp = await fetch('/api/appearance');
+    const data = await resp.json();
+    if (!data.events) throw new Error('no events');
+    body.innerHTML = Object.keys(data.events).sort().map(name => {
+      const e = data.events[name];
+      return '<div style="display:grid;grid-template-columns:2fr 1fr auto auto 2fr;gap:6px;align-items:center;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:0.8rem">' +
+        '<span style="font-weight:600">' + esc(name) + '</span>' +
+        '<input type="text" value="' + esc(e.icon||'') + '" data-ev="' + esc(name) + '" data-f="icon" maxlength="4" style="background:var(--surface);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:5px;font-size:0.78rem">' +
+        '<input type="color" value="' + esc(e.color||'#000') + '" data-ev="' + esc(name) + '" data-f="color" style="width:32px;height:28px">' +
+        '<select data-ev="' + esc(name) + '" data-f="animation" style="background:var(--surface);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:5px;font-size:0.78rem">' +
+          ['none','pulse','crawl','blink','progress'].map(a => '<option'+(e.animation===a?' selected':'')+'>'+a+'</option>').join('') +
+        '</select>' +
+        '<input type="text" value="' + esc(e.label||'') + '" data-ev="' + esc(name) + '" data-f="label" maxlength="12" style="background:var(--surface);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:5px;font-size:0.78rem">' +
+      '</div>';
+    }).join('');
+  } catch(e) { body.innerHTML = '<p class="dim">Failed to load</p>'; }
+}
+
+async function saveAppearance() {
+  const events = {};
+  document.querySelectorAll('#visualBody [data-ev]').forEach(el => {
+    const ev = el.dataset.ev;
+    if (!events[ev]) events[ev] = {icon:'',color:'#000000',animation:'none',label:''};
+    events[ev][el.dataset.f] = el.value;
   });
+  try {
+    await fetch('/api/appearance', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({events}) });
+    closeModal('visualModal');
+  } catch(e) {}
+}
+
+// ═══════════════════════════════════════════════════
+// Theme Editor
+// ═══════════════════════════════════════════════════
+const THEME_VARS = ['--bg','--panel','--surface','--border','--text','--text-dim','--accent','--danger','--warn','--info'];
+async function showThemeEditor() {
+  document.getElementById('themeModal').style.display = '';
+  const body = document.getElementById('themeBody');
+  const rs = getComputedStyle(document.documentElement);
+  body.innerHTML = THEME_VARS.map(v => {
+    const val = rs.getPropertyValue(v).trim();
+    return '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:0.8rem">' +
+      '<span style="min-width:80px">' + esc(v) + '</span>' +
+      '<input type="color" value="' + esc(val) + '" data-var="' + esc(v) + '" style="width:32px;height:28px">' +
+      '<input type="text" value="' + esc(val) + '" data-txt="' + esc(v) + '" style="flex:1;background:var(--surface);border:1px solid var(--border);color:var(--text);padding:3px 6px;border-radius:5px;font-size:0.78rem">' +
+    '</div>';
+  }).join('');
+  body.querySelectorAll('input[type=color]').forEach(c => {
+    const txt = body.querySelector('input[data-txt="'+c.dataset.var+'"]');
+    c.oninput = () => { txt.value = c.value; };
+    txt.oninput = () => { c.value = txt.value; };
+  });
+}
+
+async function saveTheme() {
+  let css = ':root {\n';
+  document.querySelectorAll('#themeBody input[type=text]').forEach(txt => { css += '  '+txt.dataset.txt+': '+txt.value+';\n'; });
+  css += '}';
+  try {
+    await fetch('/api/theme', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({css}) });
+    document.querySelectorAll('#themeBody input[type=text]').forEach(txt => { document.documentElement.style.setProperty(txt.dataset.txt, txt.value); });
+    closeModal('themeModal');
+  } catch(e) {}
+}
+
+// ═══════════════════════════════════════════════════
+// Layout Save / Load
+// ═══════════════════════════════════════════════════
+function showSaveDialog() { document.getElementById('saveModal').style.display = ''; document.getElementById('saveName').value = ''; document.getElementById('saveName').focus(); }
+async function saveLayout() {
+  const name = document.getElementById('saveName').value.trim(); if (!name) return;
+  try {
+    await fetch('/api/layouts/save', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, terminal_id:'default'}) });
+    closeModal('saveModal');
+  } catch(e) {}
+}
+
+async function showLoadDialog() {
+  document.getElementById('loadModal').style.display = '';
+  const list = document.getElementById('loadList');
+  list.innerHTML = '<p class="dim">Loading...</p>';
+  try {
+    const resp = await fetch('/api/layouts');
+    const data = await resp.json();
+    const layouts = data.layouts || [];
+    list.innerHTML = layouts.length === 0 ? '<p class="dim">No saved layouts</p>' :
+      layouts.map(l => '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.04)">' +
+        '<span style="font-size:0.85rem">'+esc(l.name)+'</span>' +
+        '<button onclick="loadLayoutByName(\''+esc(l.name)+'\')" style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:5px;padding:4px 10px;cursor:pointer;font-size:0.75rem">Load</button>' +
+      '</div>').join('');
+  } catch(e) { list.innerHTML = '<p class="dim">Failed to load</p>'; }
+}
+
+async function loadLayoutByName(name) {
+  try {
+    await fetch('/api/layouts/load', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, terminal_id:'default'}) });
+    closeModal('loadModal');
+  } catch(e) {}
+}
 </script>
 </body>
 </html>
