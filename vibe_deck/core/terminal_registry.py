@@ -57,6 +57,7 @@ class TerminalRegistry:
                 terminal_type="physical",
                 grid="4x8",
                 layout="default-streamdeck-xl.yaml",
+                terminal_id="default",
             )
             self._config.terminals.append(default)
             self.save()

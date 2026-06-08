@@ -76,9 +76,11 @@ class TerminalInfo:
     created_at: str = ""
 
     @classmethod
-    def create(cls, name: str, terminal_type: str, grid: str, layout: str = "") -> "TerminalInfo":
+    def create(
+        cls, name: str, terminal_type: str, grid: str, layout: str = "", terminal_id: str = ""
+    ) -> "TerminalInfo":
         """Create a new TerminalInfo with auto-generated UUID token."""
-        tid = str(uuid.uuid4())
+        tid = terminal_id or str(uuid.uuid4())
         return cls(
             id=tid,
             name=name,
@@ -157,6 +159,7 @@ def _default_config() -> VibeDeckConfig:
         terminal_type="physical",
         grid="4x8",
         layout="default-streamdeck-xl.yaml",
+        terminal_id="default",
     )
     return VibeDeckConfig(
         agent_patterns=[

@@ -91,10 +91,12 @@ def _serve_parser(sub):
         epilog="Example: vibe-deck serve --demo --port 9734")
     p.add_argument("--port", type=int, default=9734, help="HTTP server port (default: 9734)")
     p.add_argument("--render", choices=["sim", "hardware"], default="sim",
-                   help="Render target: sim (browser) or hardware (real Deck)")
-    p.add_argument("--device", type=int, default=0, help="Stream Deck device index (--render hardware)")
+                   help="[DEPRECATED] Render target. Use --no-physical instead")
+    p.add_argument("--device", type=int, default=0, help="Stream Deck device index")
     p.add_argument("--no-autodetect", action="store_true", help="Disable agent auto-discovery")
     p.add_argument("--demo", action="store_true", help="Start with sample widgets for development")
+    p.add_argument("--expose", action="store_true", help="Bind to 0.0.0.0 (allow LAN connections)")
+    p.add_argument("--no-physical", action="store_true", help="Skip Stream Deck hardware detection (virtual-only mode)")
 
 
 def _status_parser(sub):
@@ -181,10 +183,12 @@ def _skill_parser(sub):
 
 def cmd_serve(args):
     """Start the VibeDeck daemon."""
+    host = "0.0.0.0" if getattr(args, 'expose', False) else "localhost"
     print(f"\n🦞  VibeDeck {__version__}")
-    print(f"   Render:   {args.render}")
-    print(f"   Web UI:   http://localhost:{args.port}")
+    print(f"   Render:   {'virtual-only' if getattr(args, 'no_physical', False) else args.render}")
+    print(f"   Web UI:   http://{host}:{args.port}")
     print(f"   Demo:     {'yes' if args.demo else 'no'}")
+    print(f"   LAN:      {'yes' if getattr(args, 'expose', False) else 'no (--expose to enable)'}")
     print(f"   Ctrl+C to stop\n")
 
     from .core.event_loop import run_supervisor
@@ -196,6 +200,8 @@ def cmd_serve(args):
             device_index=args.device,
             autodetect=not args.no_autodetect,
             demo=args.demo,
+            expose=getattr(args, 'expose', False),
+            no_physical=getattr(args, 'no_physical', False),
         ))
     except KeyboardInterrupt:
         print("\n👋 VibeDeck stopped.")
@@ -206,6 +212,7 @@ def cmd_demo(args):
     ns = argparse.Namespace(
         port=9734, render="sim", device=0,
         no_autodetect=True, demo=True,
+        expose=False, no_physical=True,
     )
     cmd_serve(ns)
 

@@ -17,6 +17,14 @@ from .layout import LayoutEngine
 log = logging.getLogger("vibe_deck.core.supervisor")
 
 
+def _parse_grid(grid: str) -> tuple[int, int]:
+    """Parse a grid string like '4x8' into (rows, cols)."""
+    parts = grid.split("x")
+    if len(parts) == 2:
+        return int(parts[0]), int(parts[1])
+    return 4, 8  # default
+
+
 class VibeDeckSupervisor:
     """
     Central supervisor that owns the event loop and wires all components.
@@ -34,15 +42,20 @@ class VibeDeckSupervisor:
         device_index: int = 0,
         autodetect: bool = True,
         demo: bool = False,
+        expose: bool = False,
+        no_physical: bool = False,
     ) -> None:
         self._port = port
         self._render = render
         self._device_index = device_index
         self._autodetect = autodetect
         self._demo = demo
+        self._expose = expose
+        self._no_physical = no_physical
 
         self._bus = MessageBus()
         self._engine = LayoutEngine()
+        self._registry = None  # TerminalRegistry, lazy-loaded
         self._tasks: list[asyncio.Task] = []
         self._shutdown_event = asyncio.Event()
 
@@ -61,9 +74,22 @@ class VibeDeckSupervisor:
         log.info("VibeDeck supervisor starting (port=%d, render=%s, demo=%s)",
                  self._port, self._render, self._demo)
 
+        # 0. Load Terminal Registry and sync with LayoutEngine
+        from .terminal_registry import TerminalRegistry
+        self._registry = TerminalRegistry()
+        self._registry.load()
+
+        # Sync all registered terminals into the LayoutEngine
+        for t in self._registry.list_all():
+            rows, cols = _parse_grid(t.grid)
+            self._engine.register_terminal(t.id, rows, cols, t.name)
+            log.debug("Synced terminal %r (id=%s, grid=%s)", t.name, t.id, t.grid)
+
         # 1. Start Web Server (first so we can show status early)
         from ..web.server import VibeDeckWebServer
-        self._web_server = VibeDeckWebServer(self._engine, port=self._port)
+        self._web_server = VibeDeckWebServer(
+            self._engine, self._registry, port=self._port, expose=self._expose
+        )
         await self._web_server.start()
 
         # 2. Demo mode: populate sample widgets
@@ -160,6 +186,10 @@ class VibeDeckSupervisor:
 
     async def _start_renderer(self) -> None:
         """Start the appropriate render target."""
+        if self._no_physical:
+            log.info("Physical terminal disabled (--no-physical)")
+            self._render = "sim"
+
         if self._render == "hardware":
             from ..render.hardware import HardwareRenderer
             self._renderer = HardwareRenderer(device_index=self._device_index)
@@ -309,6 +339,8 @@ async def run_supervisor(
     device_index: int = 0,
     autodetect: bool = True,
     demo: bool = False,
+    expose: bool = False,
+    no_physical: bool = False,
 ) -> None:
     """
     Entry point: create and run the VibeDeck supervisor.
@@ -321,6 +353,8 @@ async def run_supervisor(
         device_index=device_index,
         autodetect=autodetect,
         demo=demo,
+        expose=expose,
+        no_physical=no_physical,
     )
 
     loop = asyncio.get_running_loop()
