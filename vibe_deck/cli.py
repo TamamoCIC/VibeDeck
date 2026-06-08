@@ -369,6 +369,10 @@ def cmd_config(args):
             print("MCP servers:")
             for ms in config.mcp_servers:
                 print(f"  - {ms.name}: {' '.join(ms.command)}")
+        if config.terminals:
+            print("Terminals:")
+            for t in config.terminals:
+                print(f"  - {t.name} [{t.type}] grid={t.grid} token={t.token[:8]}...")
 
 
 def cmd_info(args):

@@ -7,7 +7,9 @@ Reads from ~/.vibe-deck/config.yaml with sensible defaults.
 from __future__ import annotations
 
 import os
+import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -62,6 +64,56 @@ class MCPServerConfig:
 
 
 @dataclass
+class TerminalInfo:
+    """A registered Terminal (physical or virtual)."""
+
+    id: str
+    name: str
+    type: str  # "physical" | "virtual"
+    grid: str  # e.g. "4x8"
+    layout: str  # filename
+    token: str
+    created_at: str = ""
+
+    @classmethod
+    def create(cls, name: str, terminal_type: str, grid: str, layout: str = "") -> "TerminalInfo":
+        """Create a new TerminalInfo with auto-generated UUID token."""
+        tid = str(uuid.uuid4())
+        return cls(
+            id=tid,
+            name=name,
+            type=terminal_type,
+            grid=grid,
+            layout=layout or f"{name}.yaml",
+            token=str(uuid.uuid4()),
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "TerminalInfo":
+        return cls(
+            id=d.get("id", str(uuid.uuid4())),
+            name=d.get("name", "unknown"),
+            type=d.get("type", "virtual"),
+            grid=d.get("grid", "4x8"),
+            layout=d.get("layout", ""),
+            token=d.get("token", str(uuid.uuid4())),
+            created_at=d.get("created_at", ""),
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "type": self.type,
+            "grid": self.grid,
+            "layout": self.layout,
+            "token": self.token,
+            "created_at": self.created_at,
+        }
+
+
+@dataclass
 class VibeDeckConfig:
     """Root configuration for VibeDeck."""
 
@@ -71,6 +123,7 @@ class VibeDeckConfig:
     autodetect: bool = True
     agent_patterns: list[AgentPattern] = field(default_factory=list)
     mcp_servers: list[MCPServerConfig] = field(default_factory=list)
+    terminals: list[TerminalInfo] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "VibeDeckConfig":
@@ -85,6 +138,9 @@ class VibeDeckConfig:
             mcp_servers=[
                 MCPServerConfig.from_dict(s) for s in d.get("mcp_servers", [])
             ],
+            terminals=[
+                TerminalInfo.from_dict(t) for t in d.get("terminals", [])
+            ],
         )
 
 
@@ -95,14 +151,21 @@ def ensure_dirs() -> None:
 
 
 def _default_config() -> VibeDeckConfig:
-    """Build the default configuration with built-in agent patterns."""
+    """Build the default configuration with built-in agent patterns and a default terminal."""
+    default_terminal = TerminalInfo.create(
+        name="default",
+        terminal_type="physical",
+        grid="4x8",
+        layout="default-streamdeck-xl.yaml",
+    )
     return VibeDeckConfig(
         agent_patterns=[
             AgentPattern(name="claude-code", process="claude"),
             AgentPattern(name="claude-code", process="claude.exe"),
             AgentPattern(name="opencode", process="opencode", args_contains=["serve"]),
             AgentPattern(name="openclaw", process="openclaw"),
-        ]
+        ],
+        terminals=[default_terminal],
     )
 
 
@@ -147,6 +210,7 @@ def save_config(config: VibeDeckConfig, path: Path | None = None) -> None:
             {"name": s.name, "command": s.command, "args": s.args}
             for s in config.mcp_servers
         ],
+        "terminals": [t.to_dict() for t in config.terminals],
     }
 
     with open(config_path, "w", encoding="utf-8") as f:
