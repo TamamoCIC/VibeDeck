@@ -177,15 +177,24 @@ class VibeDeckSupervisor:
             log.info("Sim renderer ready")
 
     async def _frame_push_loop(self) -> None:
-        """Periodically push LayoutFrames to all render targets."""
+        """Periodically push LayoutFrames to all render targets.
+
+        Iterates all registered terminals and pushes each one's frame
+        to the appropriate render target.
+        """
         interval = 0.1 if self._render == "hardware" else 0.5
         try:
             while not self._shutdown_event.is_set():
-                await self._web_server.broadcast_frame()
-                # If hardware, also push to physical deck
-                if self._render == "hardware" and hasattr(self, '_renderer'):
-                    if hasattr(self._renderer, 'render_frame'):
-                        self._renderer.render_frame(self._engine.frame)
+                for terminal_id in self._engine.list_terminals():
+                    frame = self._engine.get_frame(terminal_id)
+                    if frame is None:
+                        continue
+                    # Push to web (SSE broadcast per terminal)
+                    await self._web_server.broadcast_frame(terminal_id, frame)
+                    # Push to hardware if this is the physical terminal
+                    if self._render == "hardware" and hasattr(self, '_renderer'):
+                        if hasattr(self._renderer, 'render_frame'):
+                            self._renderer.render_frame(frame)
                 await asyncio.sleep(interval)
         except asyncio.CancelledError:
             pass
@@ -220,6 +229,8 @@ class VibeDeckSupervisor:
             "telegram": TG_DISPLAY,
         }
 
+        terminal_id = msg.payload.get("terminal_id", "default")
+
         if msg.type == MessageType.AGENT_ONLINE:
             agent_name = msg.payload.get("agent_name", "unknown")
             widget_id = f"{agent_name}-auto"
@@ -228,14 +239,16 @@ class VibeDeckSupervisor:
             ds = DisplayState(icon="🆕", color="#64748b", animation="pulse", label="Starting")
             ws = WidgetState(id=widget_id, type=WidgetType.AGENT, display=ds,
                              meta={"agent": agent_name, "pid": msg.payload.get("pid")})
-            self._engine.update_widget(ws)
+            self._engine.update_widget(ws, terminal_id)
 
         elif msg.type == MessageType.AGENT_OFFLINE:
             agent_name = msg.payload.get("agent_name", "unknown")
             widget_id = f"{agent_name}-auto"
-            existing = self._engine.frame.widgets.get(widget_id)
-            if existing:
-                existing.update_display(icon="⚫", color="#374151", animation="none", label="Offline")
+            frame = self._engine.get_frame(terminal_id)
+            if frame:
+                existing = frame.widgets.get(widget_id)
+                if existing:
+                    existing.update_display(icon="⚫", color="#374151", animation="none", label="Offline")
 
         elif msg.type == MessageType.WIDGET_STATE_UPDATE:
             agent_name = msg.payload.get("agent_name", "unknown")
@@ -246,25 +259,27 @@ class VibeDeckSupervisor:
             display_map = DISPLAY_MAP.get(agent_name, {})
             display_cfg = display_map.get(status, {"icon": "⚫", "color": "#374151", "animation": "none", "label": status})
 
-            existing = self._engine.frame.widgets.get(widget_id)
-            if existing:
-                existing.update_display(**display_cfg)
-                existing.meta.update(data)
-            else:
-                ds = DisplayState(**display_cfg)
-                if "badge" in data:
-                    ds.badge = str(data["badge"])
-                ws = WidgetState(id=widget_id, type=WidgetType.AGENT, display=ds, meta=data)
-                self._engine.update_widget(ws)
+            frame = self._engine.get_frame(terminal_id)
+            if frame:
+                existing = frame.widgets.get(widget_id)
+                if existing:
+                    existing.update_display(**display_cfg)
+                    existing.meta.update(data)
+                else:
+                    ds = DisplayState(**display_cfg)
+                    if "badge" in data:
+                        ds.badge = str(data["badge"])
+                    ws = WidgetState(id=widget_id, type=WidgetType.AGENT, display=ds, meta=data)
+                    self._engine.update_widget(ws, terminal_id)
 
         elif msg.type == MessageType.KEY_PRESSED:
             key = msg.payload.get("key", -1)
-            log.debug("Key %d pressed", key)
+            log.debug("Key %d pressed on terminal %r", key, terminal_id)
 
         elif msg.type == MessageType.WIDGET_REMOVED:
             agent_name = msg.payload.get("agent_name", "unknown")
             widget_id = f"{agent_name}-auto"
-            self._engine.frame.remove_widget(widget_id)
+            self._engine.remove_widget(widget_id, terminal_id)
 
     async def _shutdown(self) -> None:
         """Gracefully shut down all components."""

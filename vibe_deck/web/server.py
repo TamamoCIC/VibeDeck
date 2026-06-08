@@ -67,17 +67,23 @@ class VibeDeckWebServer:
             self._runner = None
             log.info("Web server stopped")
 
-    async def broadcast_frame(self) -> None:
-        """Push the current LayoutFrame to all SSE subscribers."""
+    async def broadcast_frame(self, terminal_id: str = "default", frame=None) -> None:
+        """Push a LayoutFrame to SSE subscribers for a specific terminal.
+
+        Args:
+            terminal_id: The terminal to broadcast for.
+            frame: Optional LayoutFrame override. If None, uses the default frame.
+        """
         if not self._clients:
             return
 
         from ..render.sim import SimRenderer
-        frame = self._engine.frame
+        if frame is None:
+            frame = self._engine.frame
         renderer = SimRenderer(frame.rows, frame.cols, frame.display_name)
         keys = renderer.render_frame(frame)
 
-        data = json.dumps({"type": "frame", "keys": keys, "display_name": frame.display_name})
+        data = json.dumps({"type": "frame", "keys": keys, "display_name": frame.display_name, "terminal_id": terminal_id})
 
         dead: list[web.StreamResponse] = []
         for resp in self._clients:

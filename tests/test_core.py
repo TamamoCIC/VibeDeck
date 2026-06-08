@@ -227,6 +227,98 @@ class TestLayoutFrame:
         assert frame2.key_count == 6
 
 
+class TestLayoutEngine:
+    """Tests for the multi-terminal LayoutEngine."""
+
+    def test_default_terminal_exists(self):
+        from vibe_deck.core.layout import LayoutEngine
+        engine = LayoutEngine()
+        assert "default" in engine.list_terminals()
+        assert engine.frame is not None
+        assert engine.frame.rows == 4
+        assert engine.frame.cols == 8
+
+    def test_register_terminal(self):
+        from vibe_deck.core.layout import LayoutEngine
+        engine = LayoutEngine()
+        frame = engine.register_terminal("phone-01", 3, 5, "phone-3x5")
+        assert "phone-01" in engine.list_terminals()
+        assert frame.rows == 3
+        assert frame.cols == 5
+        assert frame.display_name == "phone-3x5"
+
+    def test_register_terminal_idempotent(self):
+        from vibe_deck.core.layout import LayoutEngine
+        engine = LayoutEngine()
+        f1 = engine.register_terminal("t1", 3, 5, "test")
+        f2 = engine.register_terminal("t1", 8, 8, "ignored")
+        assert f1 is f2  # same frame returned
+        assert f1.rows == 3  # original dimensions preserved
+
+    def test_unregister_terminal(self):
+        from vibe_deck.core.layout import LayoutEngine
+        engine = LayoutEngine()
+        engine.register_terminal("phone-01", 3, 5, "phone")
+        engine.unregister_terminal("phone-01")
+        assert "phone-01" not in engine.list_terminals()
+        assert engine.get_frame("phone-01") is None
+
+    def test_unregister_default_is_noop(self):
+        from vibe_deck.core.layout import LayoutEngine
+        engine = LayoutEngine()
+        engine.unregister_terminal("default")
+        assert "default" in engine.list_terminals()  # default is preserved
+
+    def test_get_frame_unknown_returns_none(self):
+        from vibe_deck.core.layout import LayoutEngine
+        engine = LayoutEngine()
+        assert engine.get_frame("nonexistent") is None
+
+    def test_update_widget_routes_to_terminal(self):
+        from vibe_deck.core.layout import LayoutEngine
+        from vibe_deck.core.types import WidgetState, WidgetType
+        engine = LayoutEngine()
+        engine.register_terminal("t1", 3, 5, "test1")
+        engine.register_terminal("t2", 4, 8, "test2")
+
+        ws = WidgetState(id="w1", type=WidgetType.AGENT)
+        engine.update_widget(ws, "t1")
+
+        f1 = engine.get_frame("t1")
+        f2 = engine.get_frame("t2")
+        assert "w1" in f1.widgets
+        assert "w1" not in f2.widgets  # isolated
+
+    def test_update_widget_unknown_terminal(self):
+        from vibe_deck.core.layout import LayoutEngine
+        from vibe_deck.core.types import WidgetState
+        engine = LayoutEngine()
+        result = engine.update_widget(WidgetState(id="x"), "ghost")
+        assert result is None
+
+    def test_list_terminals(self):
+        from vibe_deck.core.layout import LayoutEngine
+        engine = LayoutEngine()
+        engine.register_terminal("a", 3, 2, "a")
+        engine.register_terminal("b", 3, 5, "b")
+        terminals = engine.list_terminals()
+        assert "default" in terminals
+        assert "a" in terminals
+        assert "b" in terminals
+        assert len(terminals) == 3
+
+    def test_remove_widget(self):
+        from vibe_deck.core.layout import LayoutEngine
+        from vibe_deck.core.types import WidgetState, WidgetType
+        engine = LayoutEngine()
+        engine.register_terminal("t1", 3, 5, "test")
+        ws = WidgetState(id="w1", type=WidgetType.AGENT)
+        engine.update_widget(ws, "t1")
+        engine.remove_widget("w1", "t1")
+        f1 = engine.get_frame("t1")
+        assert "w1" not in f1.widgets
+
+
 class TestMessageBus:
     @pytest.mark.asyncio
     async def test_publish_subscribe(self):
