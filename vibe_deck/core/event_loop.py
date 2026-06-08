@@ -324,10 +324,12 @@ class VibeDeckSupervisor:
                 ds = self._resolve_display(agent_name, data, DISPLAY_MAP)
 
             # Don't let adapter heartbeats overwrite hook-driven fine-grained status.
-            # If the last update was from a hook event and the adapter pushes a generic
-            # "running" status, keep the hook-driven display for a grace period.
+            # Adapter heartbeat publishes status="running" every 3s; hook events
+            # communicate the real state (Waiting, Idle, tool names).  Once a hook
+            # event has set the state, ignore heartbeats until a "Stop" hook event
+            # or an explicit offline status clears the hook-driven state.
             _is_hook_event = bool(_hook_event)
-            _is_adapter_heartbeat = bool(not _hook_event and _status == "running")
+            _is_adapter_heartbeat = bool(not _hook_event and _status in ("running", "idle"))
 
             # Apply tool name to label for PreToolUse / PostToolUse events
             if _hook_event in ("PreToolUse", "PostToolUse") and _tool_name:
@@ -350,12 +352,17 @@ class VibeDeckSupervisor:
                     continue
                 existing = frame.widgets.get(widget_id)
                 if existing:
-                    # Skip adapter heartbeat if widget already has hook-driven state
+                    # Skip adapter heartbeat when hook events have set the state.
+                    # Hook events (UserPromptSubmit, PreToolUse, PostToolUse, Stop)
+                    # carry authoritative state; the adapter's periodic "running"
+                    # heartbeat should never overwrite them.  Only allow heartbeats
+                    # when no hook event has been received yet (startup) or after a
+                    # Stop confirms the session is idle.
                     if _is_adapter_heartbeat and hasattr(existing, '_last_hook_ts'):
                         import time
-                        if time.time() - existing._last_hook_ts < 5.0:
-                            log.debug("[HOOK→UI] skipping heartbeat for %s (hook state is fresh)", widget_id)
-                            continue
+                        # Keep suppressing indefinitely — hook events are authoritative
+                        log.debug("[HOOK→UI] skipping heartbeat for %s (hook events are authoritative)", widget_id)
+                        continue
 
                     import time
                     now = time.time()
