@@ -500,7 +500,7 @@ class VibeDeckSupervisor:
 
     # ── Thinking / Writing timeout detection ─────────
 
-    THINKING_TIMEOUT_S = 2.0  # seconds of silence before "Thinking"
+    THINKING_TIMEOUT_S = 0.8  # seconds of silence before "Thinking"
 
     async def _reset_thinking_timer(self, terminal_id: str) -> None:
         """Reset the inactivity timer.  If no new hook event arrives for

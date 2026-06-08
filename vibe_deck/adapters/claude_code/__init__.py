@@ -29,12 +29,12 @@ APPEARANCE_CONFIG_PATH = Path.home() / ".vibe-deck" / "adapters" / "claude-code.
 
 _BUILTIN_STATUS_TO_DISPLAY: dict[str, dict[str, str]] = {
     "SessionStart":     {"icon": "🐙", "color": "#22c55e", "animation": "crawl",  "label": "Running"},
-    "Stop":             {"icon": "🐙", "color": "#166534", "animation": "none",   "label": "Idle"},
+    "Stop":             {"icon": "🐙", "color": "#475569", "animation": "none",   "label": "Idle"},
     "UserPromptSubmit": {"icon": "🐙", "color": "#eab308", "animation": "blink",  "label": "Waiting"},
     "PreToolUse":       {"icon": "🐙", "color": "#22c55e", "animation": "crawl",  "label": "Tool"},
     "PostToolUse":      {"icon": "🐙", "color": "#22c55e", "animation": "crawl",  "label": "Running"},
     "PreCompact":       {"icon": "🐙", "color": "#6366f1", "animation": "pulse",  "label": "Compact"},
-    "SubagentStop":     {"icon": "🐙", "color": "#166534", "animation": "none",   "label": "Sub done"},
+    "SubagentStop":     {"icon": "🐙", "color": "#475569", "animation": "none",   "label": "Sub done"},
     "SessionEnd":       {"icon": "⚫", "color": "#374151", "animation": "none",   "label": "Offline"},
     "running":          {"icon": "🐙", "color": "#22c55e", "animation": "crawl",  "label": "Running"},
     "idle":             {"icon": "🐙", "color": "#166534", "animation": "none",   "label": "Idle"},
