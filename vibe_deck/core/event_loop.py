@@ -527,7 +527,7 @@ class VibeDeckSupervisor:
                 for widget_id, ws in list(frame.widgets.items()):
                     current_label = ws.display.label
                     current_anim = ws.display.animation.value if hasattr(ws.display.animation, 'value') else str(ws.display.animation)
-                    if current_label in ("Waiting", "Idle", "Offline", "Error", "Sub done"):
+                    if current_label in ("Idle", "Offline", "Error", "Sub done"):
                         continue
                     if current_anim in ("blink",):
                         continue
