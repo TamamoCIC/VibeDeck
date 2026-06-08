@@ -83,6 +83,7 @@ class VibeDeckSupervisor:
         self._shutdown_event = asyncio.Event()
         self._thinking_timer: asyncio.Task | None = None
         self._thinking_timer_lock = asyncio.Lock()
+        self._last_hook_activity: float = 0.0  # monotonic timestamp of last hook event
 
     # ── Public API ─────────────────────────────────
 
@@ -231,21 +232,27 @@ class VibeDeckSupervisor:
             log.info("Sim renderer ready")
 
     async def _frame_push_loop(self) -> None:
-        """Periodically push LayoutFrames to all render targets.
+        """Adaptive frame-rate push loop.
 
-        Iterates all registered terminals and pushes each one's frame
-        to the appropriate render target.
+        - 30 fps while agents are active (hook events within last 3s)
+        -  1 fps when all agents are idle
         """
-        interval = 0.1 if self._render == "hardware" else 0.5
+        import time as _time
+        FAST_INTERVAL = 1.0 / 30   # ~33ms
+        SLOW_INTERVAL = 1.0        # 1s when idle
+        ACTIVITY_WINDOW = 3.0      # seconds
+
         try:
             while not self._shutdown_event.is_set():
+                now = _time.monotonic()
+                active = (now - self._last_hook_activity) < ACTIVITY_WINDOW
+                interval = FAST_INTERVAL if active else SLOW_INTERVAL
+
                 for terminal_id in self._engine.list_terminals():
                     frame = self._engine.get_frame(terminal_id)
                     if frame is None:
                         continue
-                    # Push to web (SSE broadcast per terminal)
                     await self._web_server.broadcast_frame(terminal_id, frame)
-                    # Push to hardware if this is the physical terminal
                     if self._render == "hardware" and hasattr(self, '_renderer'):
                         if hasattr(self._renderer, 'render_frame'):
                             self._renderer.render_frame(frame)
@@ -430,12 +437,10 @@ class VibeDeckSupervisor:
             widget_id = f"{agent_name}-auto"
             self._engine.remove_widget(widget_id, terminal_id)
 
-        # ── Reset thinking timer on every hook event ──────
-        # After a hook event (especially PostToolUse), if no new
-        # event arrives for THINKING_TIMEOUT_S seconds, the widget
-        # transitions to "Thinking" state to make model reasoning
-        # and text generation visible.
+        # ── Reset thinking timer + activity timestamp ──────
         if msg.type in (MessageType.WIDGET_STATE_UPDATE, MessageType.AGENT_ONLINE):
+            import time as _time
+            self._last_hook_activity = _time.monotonic()
             asyncio.create_task(self._reset_thinking_timer(terminal_id))
 
     def _resolve_display(
