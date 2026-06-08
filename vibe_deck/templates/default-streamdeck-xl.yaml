@@ -1,0 +1,6 @@
+# VibeDeck Layout Template — Stream Deck XL (4x8)
+name: "Stream Deck XL Default"
+display_name: "Stream Deck XL"
+rows: 4
+cols: 8
+widgets: []

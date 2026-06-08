@@ -37,6 +37,33 @@ KEY_SIZE = {
     "Stream Deck Pedal": (0, 0),
 }
 
+# Stream Deck model → default template filename
+_DECK_MODEL_TO_TEMPLATE: dict[str, str] = {
+    "Stream Deck XL": "default-streamdeck-xl.yaml",
+    "Stream Deck": "default-streamdeck.yaml",
+    "Stream Deck Mini": "default-streamdeck-mini.yaml",
+    "Stream Deck Neo": "default-streamdeck.yaml",
+    "Stream Deck Plus": "default-streamdeck.yaml",
+    "Stream Deck Pedal": "default-streamdeck-mini.yaml",
+}
+
+# Phone grid → default template filename
+_PHONE_GRID_TO_TEMPLATE: dict[str, str] = {
+    "4x8": "default-phone-4x8.yaml",
+    "3x5": "default-phone-3x5.yaml",
+    "3x4": "default-phone-3x4.yaml",
+}
+
+
+def get_deck_template(deck_type: str) -> str | None:
+    """Get the default template filename for a Stream Deck model."""
+    return _DECK_MODEL_TO_TEMPLATE.get(deck_type)
+
+
+def get_phone_template(grid: str) -> str | None:
+    """Get the default template filename for a phone grid."""
+    return _PHONE_GRID_TO_TEMPLATE.get(grid)
+
 
 class HardwareRenderer:
     """

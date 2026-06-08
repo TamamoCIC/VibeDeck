@@ -1,0 +1,6 @@
+# VibeDeck Layout Template — Phone 3x4 (Sparse)
+name: "Phone 3x4 Default"
+display_name: "phone-3x4"
+rows: 3
+cols: 4
+widgets: []

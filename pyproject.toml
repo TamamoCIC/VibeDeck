@@ -50,3 +50,6 @@ vibe-deck = "vibe_deck.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["vibe_deck*"]
+
+[tool.setuptools.package-data]
+"vibe_deck" = ["templates/*.yaml"]

@@ -1,0 +1,6 @@
+# VibeDeck Layout Template — Stream Deck Mini (3x2)
+name: "Stream Deck Mini Default"
+display_name: "Stream Deck Mini"
+rows: 3
+cols: 2
+widgets: []

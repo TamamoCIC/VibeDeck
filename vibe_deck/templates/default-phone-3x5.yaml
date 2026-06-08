@@ -1,0 +1,6 @@
+# VibeDeck Layout Template — Phone 3x5 (Standard)
+name: "Phone 3x5 Default"
+display_name: "phone-3x5"
+rows: 3
+cols: 5
+widgets: []

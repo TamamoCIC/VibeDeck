@@ -1,0 +1,6 @@
+# VibeDeck Layout Template — Stream Deck Standard (3x5)
+name: "Stream Deck Default"
+display_name: "Stream Deck"
+rows: 3
+cols: 5
+widgets: []

@@ -1,0 +1,6 @@
+# VibeDeck Layout Template — Phone 4x8 (Dense)
+name: "Phone 4x8 Default"
+display_name: "phone-4x8"
+rows: 4
+cols: 8
+widgets: []
