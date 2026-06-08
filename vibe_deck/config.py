@@ -165,6 +165,9 @@ def _default_config() -> VibeDeckConfig:
         agent_patterns=[
             AgentPattern(name="claude-code", process="claude"),
             AgentPattern(name="claude-code", process="claude.exe"),
+            # npm / npx installs on Windows may run as node.exe
+            AgentPattern(name="claude-code", process="node", args_contains=["claude"]),
+            AgentPattern(name="claude-code", process="node.exe", args_contains=["claude"]),
             AgentPattern(name="opencode", process="opencode", args_contains=["serve"]),
             AgentPattern(name="openclaw", process="openclaw"),
         ],
