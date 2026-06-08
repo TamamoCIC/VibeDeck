@@ -509,12 +509,12 @@ class VibeDeckSupervisor:
 
     async def _reset_thinking_timer(self, terminal_id: str) -> None:
         """Reset the inactivity timer.  If no new hook event arrives for
-        THINKING_TIMEOUT_S seconds, publish a "Thinking" state to make
-        model reasoning / text generation visible on the widget."""
+        THINKING_TIMEOUT_S seconds, apply "Thinking" state to widgets on
+        ALL terminals and force-push frames so every connected device
+        sees it."""
         import asyncio
 
         async with self._thinking_timer_lock:
-            # Cancel previous timer
             if self._thinking_timer and not self._thinking_timer.done():
                 self._thinking_timer.cancel()
                 try:
@@ -524,32 +524,28 @@ class VibeDeckSupervisor:
 
             async def _fire_thinking():
                 await asyncio.sleep(self.THINKING_TIMEOUT_S)
-                frame = self._engine.get_frame(terminal_id)
-                if frame is None:
-                    return
                 from .types import DisplayState
                 from ..adapters.claude_code import STATUS_TO_DISPLAY
-                changed = False
-                for widget_id, ws in list(frame.widgets.items()):
-                    current_label = ws.display.label
-                    current_anim = ws.display.animation.value if hasattr(ws.display.animation, 'value') else str(ws.display.animation)
-                    if current_label in ("Idle", "Offline", "Error", "Sub done"):
+                thinking_cfg = STATUS_TO_DISPLAY.get("thinking", {"icon": "🐙", "color": "#7c3aed", "animation": "pulse", "label": "Thinking"})
+                # Update ALL terminals — hook events route to every device
+                for tid in self._engine.list_terminals():
+                    frame = self._engine.get_frame(tid)
+                    if frame is None:
                         continue
-                    if current_anim in ("blink",):
-                        continue
-                    thinking_cfg = STATUS_TO_DISPLAY.get("thinking", {"icon": "🐙", "color": "#7c3aed", "animation": "pulse", "label": "Thinking"})
-                    ds = DisplayState(**thinking_cfg)
-                    ws.display = ds
-                    changed = True
-                    log.info("[THINKING] widget %s → Thinking (%.1fs silence on terminal %s)",
-                             widget_id, self.THINKING_TIMEOUT_S, terminal_id)
-                # Force immediate frame push to ALL terminals so every
-                # connected device sees the thinking state
-                if changed and hasattr(self, '_web_server'):
-                    for tid in self._engine.list_terminals():
-                        f = self._engine.get_frame(tid)
-                        if f is not None:
-                            await self._web_server.broadcast_frame(tid, f)
+                    for widget_id, ws in list(frame.widgets.items()):
+                        current_label = ws.display.label
+                        current_anim = ws.display.animation.value if hasattr(ws.display.animation, 'value') else str(ws.display.animation)
+                        if current_label in ("Idle", "Offline", "Error", "Sub done"):
+                            continue
+                        if current_anim in ("blink",):
+                            continue
+                        ds = DisplayState(**thinking_cfg)
+                        ws.display = ds
+                        log.info("[THINKING] widget %s → Thinking (%.1fs silence on terminal %s)",
+                                 widget_id, self.THINKING_TIMEOUT_S, tid)
+                        # Force immediate frame push
+                        if hasattr(self, '_web_server'):
+                            await self._web_server.broadcast_frame(tid, frame)
 
             self._thinking_timer = asyncio.create_task(_fire_thinking())
 
