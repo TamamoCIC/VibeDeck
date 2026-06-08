@@ -71,6 +71,7 @@ class VibeDeckWebServer:
         self._app.router.add_post("/api/key/{index}", self._key_press)
         self._app.router.add_get("/api/terminal/status", self._terminal_status)
         self._app.router.add_post("/api/terminal/register", self._terminal_register)
+        self._app.router.add_get("/api/terminals", self._list_terminals)
         self._app.router.add_get("/api/layouts", self._list_layouts)
         self._app.router.add_post("/api/layouts/save", self._save_layout)
         self._app.router.add_post("/api/layouts/load", self._load_layout)
@@ -350,6 +351,33 @@ class VibeDeckWebServer:
             "status": "ok",
             "terminal": terminal.to_dict(),
         }, status=201)
+
+    async def _list_terminals(self, request: web.Request) -> web.Response:
+        """List all registered terminals (no auth required — local daemon).
+
+        Returns id, name, type, grid, widget count, and — for virtual
+        terminals only — the full token so users can copy a shareable
+        connection URL.  Physical terminals never expose a token.
+        """
+        terminals = []
+        for t in self._registry.list_all():
+            frame = self._engine.get_frame(t.id)
+            entry = {
+                "id": t.id,
+                "name": t.name,
+                "type": t.type,
+                "grid": t.grid,
+                "widget_count": len(frame.widgets) if frame else 0,
+                "created_at": t.created_at,
+            }
+            # Expose token only for virtual terminals so users can
+            # copy a connection link for their phone / other browser.
+            if t.type == "virtual":
+                entry["token"] = t.token
+            terminals.append(entry)
+        # Sort: default first, then by name
+        terminals.sort(key=lambda t: (0 if t["id"] == "default" else 1, t["name"]))
+        return web.json_response({"terminals": terminals})
 
     async def _list_layouts(self, request: web.Request) -> web.Response:
         """List available layout files (excluding autosave internal files)."""

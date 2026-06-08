@@ -306,6 +306,7 @@
   <button onclick="showVisualConfig()" title="Widget appearance editor">🎨 Visual</button>
   <button onclick="showSaveDialog()" title="Save layout">💾 Save</button>
   <button onclick="showLoadDialog()" title="Load layout">📂 Load</button>
+  <button onclick="showTerminalList()" title="Manage terminals & devices">📡 Terminals</button>
   <button onclick="showThemeEditor()" title="UI theme colors">💅 Theme</button>
   <span class="status-text">
     <span class="status-dot waiting" id="statusDot"></span>
@@ -394,6 +395,24 @@
       <h3>📂 Load Layout</h3>
       <button class="modal-close" onclick="closeModal('loadModal')">✕</button></div>
     <div class="modal-body" id="loadList"><p class="dim">Loading...</p></div>
+  </div>
+</div>
+
+<!-- ═══ Terminal List Modal ═══ -->
+<div id="terminalListModal" class="modal" style="display:none">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3>📡 Terminals & Devices</h3>
+      <button class="modal-close" onclick="closeModal('terminalListModal')">✕</button>
+    </div>
+    <div class="modal-body" id="terminalListBody">
+      <p class="dim">Loading...</p>
+    </div>
+    <div class="modal-footer" style="justify-content:center">
+      <button class="wizard-btn" onclick="closeModal('terminalListModal'); showWizard()" style="width:auto;padding:8px 24px">
+        ＋ Connect New Device
+      </button>
+    </div>
   </div>
 </div>
 
@@ -651,6 +670,8 @@
     const btn = document.getElementById('wizardBtn');
     const err = document.getElementById('wizardError');
     const name = document.getElementById('wizardName').value.trim() || 'My Terminal';
+    const existingToken = getToken();
+    const isAddingFromApp = !!existingToken;
     btn.disabled = true;
     btn.textContent = 'Connecting...';
     err.textContent = '';
@@ -663,8 +684,15 @@
       });
       const data = await resp.json();
       if (resp.ok && data.terminal) {
-        saveToken(data.terminal.token);
-        showApp(data.terminal.grid, data.terminal.name);
+        if (isAddingFromApp) {
+          // Adding from within app — go back to terminal list
+          hideWizard();
+          document.getElementById('log').textContent = '✅ Terminal "' + name + '" registered';
+        } else {
+          // Initial setup — switch to the new terminal
+          saveToken(data.terminal.token);
+          showApp(data.terminal.grid, data.terminal.name);
+        }
       } else {
         err.textContent = data.error || 'Registration failed';
       }
@@ -1025,6 +1053,107 @@
     } catch (e) {
       document.getElementById('log').textContent = '❌ Connection error';
     }
+  }
+
+  // ── Terminal management ────────────────────────
+
+  async function showTerminalList() {
+    document.getElementById('terminalListModal').style.display = '';
+    const body = document.getElementById('terminalListBody');
+    body.innerHTML = '<p class="dim">Loading...</p>';
+    try {
+      const resp = await fetch('/api/terminals');
+      const data = await resp.json();
+      const terminals = data.terminals || [];
+      if (terminals.length === 0) {
+        body.innerHTML = '<p class="dim">No terminals registered</p>';
+        return;
+      }
+      const currentToken = getToken();
+      body.innerHTML = terminals.map(t => {
+        const isCurrent = t.type === 'virtual' && t.token === currentToken;
+        const statusIcon = t.widget_count > 0 ? '🟢' : '⚫';
+        const typeBadge = t.type === 'physical'
+          ? '<span style="font-size:0.65rem;background:var(--info);color:#fff;padding:1px 6px;border-radius:3px">physical</span>'
+          : '<span style="font-size:0.65rem;background:var(--accent);color:#000;padding:1px 6px;border-radius:3px">virtual</span>';
+        const currentBadge = isCurrent
+          ? '<span style="font-size:0.65rem;background:var(--warn);color:#000;padding:1px 6px;border-radius:3px;margin-left:4px">current</span>'
+          : '';
+        const copyBtn = t.token
+          ? '<button onclick="copyTerminalLink(\'' + esc(t.token) + '\', \'' + esc(t.name) + '\')" style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:5px;padding:3px 8px;cursor:pointer;font-size:0.7rem" title="Copy connection link">📋 Link</button>'
+          : '';
+        const switchBtn = (t.token && !isCurrent)
+          ? '<button onclick="switchToTerminal(\'' + esc(t.token) + '\', \'' + esc(t.grid) + '\', \'' + esc(t.name) + '\')" style="background:var(--info);color:#fff;border:none;border-radius:5px;padding:3px 8px;cursor:pointer;font-size:0.7rem;margin-left:4px">↗ View</button>'
+          : '';
+        return '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.04)">' +
+          '<div style="flex:1">' +
+            '<div style="display:flex;align-items:center;gap:6px">' +
+              '<span style="font-size:1rem">' + statusIcon + '</span>' +
+              '<strong style="font-size:0.85rem">' + esc(t.name) + '</strong>' +
+              typeBadge + currentBadge +
+            '</div>' +
+            '<div style="font-size:0.7rem;color:var(--text-dim);margin-top:2px">' +
+              'Grid: ' + esc(t.grid) + ' · ' + t.widget_count + ' widgets' +
+              (t.id === 'default' ? '' : ' · <code style="font-size:0.65rem">' + esc(t.id.slice(0,8)) + '</code>') +
+            '</div>' +
+          '</div>' +
+          '<div style="display:flex;gap:4px;flex-shrink:0">' + copyBtn + switchBtn + '</div>' +
+        '</div>';
+      }).join('');
+    } catch (e) {
+      body.innerHTML = '<p class="dim">Failed to load terminals</p>';
+    }
+  }
+
+  function copyTerminalLink(token, name) {
+    const url = window.location.origin + window.location.pathname + '?token=' + token;
+    navigator.clipboard.writeText(url).then(() => {
+      const log = document.getElementById('log');
+      log.textContent = '📋 Link for "' + name + '" copied to clipboard';
+      log.style.color = 'var(--accent)';
+      setTimeout(() => { log.style.color = 'var(--text-dim)'; }, 2000);
+    }).catch(() => {
+      // Fallback for non-HTTPS
+      const ta = document.createElement('textarea');
+      ta.value = url;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      document.getElementById('log').textContent = '📋 Link copied!';
+    });
+  }
+
+  function switchToTerminal(token, grid, name) {
+    saveToken(token);
+    closeModal('terminalListModal');
+    showApp(grid, name);
+  }
+
+  function showWizard() {
+    // Show wizard in "add terminal" mode — adds a back link
+    document.getElementById('app-view').style.display = 'none';
+    document.getElementById('wizard-view').style.display = '';
+
+    // Add back button if not already there
+    let backRow = document.getElementById('wizardBackRow');
+    if (!backRow) {
+      backRow = document.createElement('div');
+      backRow.id = 'wizardBackRow';
+      backRow.style.cssText = 'margin-bottom:16px;text-align:left';
+      backRow.innerHTML = '<button onclick="hideWizard()" style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:0.8rem">← Back to Terminals</button>';
+      const card = document.querySelector('.wizard-card');
+      if (card) card.insertBefore(backRow, card.firstChild);
+    }
+  }
+
+  function hideWizard() {
+    document.getElementById('wizard-view').style.display = 'none';
+    document.getElementById('app-view').style.display = '';
+    // Remove back button for next time
+    const backRow = document.getElementById('wizardBackRow');
+    if (backRow) backRow.remove();
+    showTerminalList();
   }
 
   // ── Close inspector on outside click ───────────
