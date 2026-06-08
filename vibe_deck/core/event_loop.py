@@ -306,6 +306,9 @@ class VibeDeckSupervisor:
             pid = msg.payload.get("pid", 0)
             widget_id = f"{agent_name}-auto"
 
+            log.info("[AGENT] %s detected (pid=%d) → widget %s on terminal %r",
+                     agent_name, pid, widget_id, terminal_id)
+
             # Create a placeholder WidgetState — PID stored in meta for
             # "vibe-deck whoami" lookups, but widget_id kept as-is so
             # hook events (FileWatcher) and adapter heartbeat target
