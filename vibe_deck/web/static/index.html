@@ -1061,47 +1061,115 @@
     document.getElementById('terminalListModal').style.display = '';
     const body = document.getElementById('terminalListBody');
     body.innerHTML = '<p class="dim">Loading...</p>';
+
     try {
       const resp = await fetch('/api/terminals');
-      const data = await resp.json();
-      const terminals = data.terminals || [];
-      if (terminals.length === 0) {
-        body.innerHTML = '<p class="dim">No terminals registered</p>';
+      if (!resp.ok) {
+        body.innerHTML = '<p class="dim">API error (HTTP ' + resp.status + ').<br>Try restarting the daemon: <code>vibe-deck serve</code></p>';
         return;
       }
+      const data = await resp.json();
+      const terminals = data.terminals || [];
+
+      // Always show the current web session at the top, even if
+      // it isn't a registered terminal in the registry (yet).
       const currentToken = getToken();
-      body.innerHTML = terminals.map(t => {
-        const isCurrent = t.type === 'virtual' && t.token === currentToken;
-        const statusIcon = t.widget_count > 0 ? '🟢' : '⚫';
-        const typeBadge = t.type === 'physical'
-          ? '<span style="font-size:0.65rem;background:var(--info);color:#fff;padding:1px 6px;border-radius:3px">physical</span>'
-          : '<span style="font-size:0.65rem;background:var(--accent);color:#000;padding:1px 6px;border-radius:3px">virtual</span>';
-        const currentBadge = isCurrent
-          ? '<span style="font-size:0.65rem;background:var(--warn);color:#000;padding:1px 6px;border-radius:3px;margin-left:4px">current</span>'
-          : '';
-        const copyBtn = t.token
-          ? '<button onclick="copyTerminalLink(\'' + esc(t.token) + '\', \'' + esc(t.name) + '\')" style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:5px;padding:3px 8px;cursor:pointer;font-size:0.7rem" title="Copy connection link">📋 Link</button>'
-          : '';
-        const switchBtn = (t.token && !isCurrent)
-          ? '<button onclick="switchToTerminal(\'' + esc(t.token) + '\', \'' + esc(t.grid) + '\', \'' + esc(t.name) + '\')" style="background:var(--info);color:#fff;border:none;border-radius:5px;padding:3px 8px;cursor:pointer;font-size:0.7rem;margin-left:4px">↗ View</button>'
-          : '';
-        return '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.04)">' +
-          '<div style="flex:1">' +
-            '<div style="display:flex;align-items:center;gap:6px">' +
-              '<span style="font-size:1rem">' + statusIcon + '</span>' +
-              '<strong style="font-size:0.85rem">' + esc(t.name) + '</strong>' +
-              typeBadge + currentBadge +
-            '</div>' +
-            '<div style="font-size:0.7rem;color:var(--text-dim);margin-top:2px">' +
-              'Grid: ' + esc(t.grid) + ' · ' + t.widget_count + ' widgets' +
-              (t.id === 'default' ? '' : ' · <code style="font-size:0.65rem">' + esc(t.id.slice(0,8)) + '</code>') +
-            '</div>' +
+      let currentTerminal = null;
+      if (currentToken) {
+        currentTerminal = terminals.find(t => t.token === currentToken);
+        // If the current session doesn't match any registry terminal
+        // (e.g. viewing default physical terminal), synthesize one.
+        if (!currentTerminal) {
+          const defaultT = terminals.find(t => t.id === 'default');
+          if (defaultT) {
+            currentTerminal = { ...defaultT, _isDefault: true };
+          }
+        }
+      }
+
+      let html = '';
+
+      // ── Current session banner ──
+      if (currentTerminal) {
+        html += '<div style="background:var(--surface);border:1px solid var(--accent);border-radius:8px;padding:10px 14px;margin-bottom:12px">' +
+          '<div style="font-size:0.7rem;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px">👆 You are viewing</div>' +
+          '<div style="font-size:0.9rem;font-weight:600;margin-top:2px">' +
+            esc(currentTerminal.name) +
+            ' <span style="font-size:0.65rem;background:var(--accent);color:#000;padding:1px 6px;border-radius:3px">' +
+              (currentTerminal._isDefault ? 'web viewer' : 'virtual') +
+            '</span>' +
           '</div>' +
-          '<div style="display:flex;gap:4px;flex-shrink:0">' + copyBtn + switchBtn + '</div>' +
+          '<div style="font-size:0.7rem;color:var(--text-dim);margin-top:2px">' +
+            'Grid: ' + esc(currentTerminal.grid) + ' · ' +
+            (currentTerminal.widget_count || 0) + ' widgets' +
+            (currentTerminal._isDefault ? ' · This is the built-in default terminal shown when no virtual terminal is connected' : '') +
+          '</div>' +
+          (currentTerminal.token ? '<div style="margin-top:6px">' +
+            '<button onclick="copyTerminalLink(\'' + esc(currentTerminal.token) + '\', \'' + esc(currentTerminal.name) + '\')" style="background:var(--accent);color:#000;border:none;border-radius:5px;padding:4px 10px;cursor:pointer;font-size:0.7rem;font-weight:600">📋 Copy link to share this view</button>' +
+          '</div>' : '') +
         '</div>';
-      }).join('');
+      } else {
+        // No token at all — user is in setup / hasn't registered
+        html += '<div style="background:var(--surface);border:1px solid var(--warn);border-radius:8px;padding:10px 14px;margin-bottom:12px">' +
+          '<div style="font-size:0.8rem;color:var(--warn)">⚠️ Not connected to any terminal.<br>Use <strong>＋ Connect New Device</strong> below to create one.</div>' +
+        '</div>';
+      }
+
+      // ── All terminals ──
+      if (terminals.length === 0) {
+        html += '<p class="dim">No terminals registered yet.</p>';
+      } else {
+        const otherTerminals = terminals.filter(t => {
+          // Don't duplicate the current session
+          if (currentTerminal && !currentTerminal._isDefault) return t.token !== currentToken;
+          if (currentTerminal && currentTerminal._isDefault && t.id === 'default') return false;
+          return true;
+        });
+
+        if (otherTerminals.length > 0) {
+          html += '<div style="font-size:0.7rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">All registered terminals</div>';
+          html += otherTerminals.map(t => {
+            const statusIcon = t.widget_count > 0 ? '🟢' : '⚫';
+            const typeBadge = t.type === 'physical'
+              ? '<span style="font-size:0.6rem;background:var(--info);color:#fff;padding:1px 5px;border-radius:3px">physical</span>'
+              : '<span style="font-size:0.6rem;background:var(--accent);color:#000;padding:1px 5px;border-radius:3px">virtual</span>';
+            const copyBtn = t.token
+              ? '<button onclick="copyTerminalLink(\'' + esc(t.token) + '\', \'' + esc(t.name) + '\')" style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:5px;padding:3px 8px;cursor:pointer;font-size:0.7rem" title="Copy connection link">📋 Link</button>'
+              : '';
+            const switchBtn = t.token
+              ? '<button onclick="switchToTerminal(\'' + esc(t.token) + '\', \'' + esc(t.grid) + '\', \'' + esc(t.name) + '\')" style="background:var(--info);color:#fff;border:none;border-radius:5px;padding:3px 8px;cursor:pointer;font-size:0.7rem;margin-left:4px">↗ View</button>'
+              : '';
+            return '<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.04)">' +
+              '<div style="flex:1">' +
+                '<div style="display:flex;align-items:center;gap:6px">' +
+                  '<span style="font-size:0.9rem">' + statusIcon + '</span>' +
+                  '<strong style="font-size:0.82rem">' + esc(t.name) + '</strong>' +
+                  typeBadge +
+                '</div>' +
+                '<div style="font-size:0.68rem;color:var(--text-dim);margin-top:2px">' +
+                  'Grid: ' + esc(t.grid) + ' · ' + t.widget_count + ' widgets' +
+                  (t.id === 'default' ? ' · built-in' : ' · <code style="font-size:0.6rem">' + esc(t.id.slice(0,8)) + '</code>') +
+                '</div>' +
+              '</div>' +
+              '<div style="display:flex;gap:4px;flex-shrink:0">' + copyBtn + switchBtn + '</div>' +
+            '</div>';
+          }).join('');
+        }
+      }
+
+      body.innerHTML = html;
+
+      // If API returned empty (old daemon?), add a hint
+      if (terminals.length === 0) {
+        body.innerHTML += '<p class="dim" style="margin-top:12px;font-size:0.7rem">If you just updated VibeDeck, restart the daemon:<br><code>vibe-deck serve</code></p>';
+      }
     } catch (e) {
-      body.innerHTML = '<p class="dim">Failed to load terminals</p>';
+      body.innerHTML = '<div style="text-align:center;padding:20px">' +
+        '<p style="color:var(--danger);font-size:0.9rem;margin-bottom:8px">⚠️ Failed to load terminals</p>' +
+        '<p class="dim" style="font-size:0.75rem">The daemon may be running an older version.</p>' +
+        '<p class="dim" style="font-size:0.75rem"><strong>Restart the daemon:</strong></p>' +
+        '<code style="font-size:0.75rem;background:var(--surface);padding:4px 10px;border-radius:4px">vibe-deck serve</code>' +
+      '</div>';
     }
   }
 
