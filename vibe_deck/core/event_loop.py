@@ -165,10 +165,11 @@ class VibeDeckSupervisor:
     # ── Internals ──────────────────────────────────
 
     def _setup_demo_widgets(self) -> None:
-        """Populate Claude Code widget on all registered terminals.
+        """Populate a demo Claude Code widget on all registered terminals.
 
-        Only creates the Claude Code agent widget at key 0 so the
-        Stream Deck / phone simulator shows live hook-driven status:
+        The widget lives in the pool and is activated on every terminal
+        at key 0 so the Stream Deck / phone simulator shows live
+        hook-driven status:
           SessionStart       → 🐙 green crawl  "Running"
           UserPromptSubmit   → 🐙 yellow blink "Waiting"
           PreToolUse         → 🐙 green crawl  tool name
@@ -177,22 +178,19 @@ class VibeDeckSupervisor:
         """
         from .types import DisplayState, WidgetState, WidgetType
 
+        ws = WidgetState(
+            id="claude-code-demo",
+            type=WidgetType.AGENT,
+            display=DisplayState(icon="🐙", color="#22c55e", animation="crawl", label="Running"),
+            meta={"agent": "Claude Code", "status": "running", "demo": True},
+        )
+        self._engine.pool_add(ws)
+
         for terminal_id in self._engine.list_terminals():
-            frame = self._engine.get_frame(terminal_id)
-            if frame is None:
-                continue
+            self._engine.pool_activate("claude-code-demo", terminal_id, 0)
+            log.debug("Demo widget activated at key 0 on terminal %s", terminal_id)
 
-            ws = WidgetState(
-                id="claude-code-demo",
-                type=WidgetType.AGENT,
-                display=DisplayState(icon="🐙", color="#22c55e", animation="crawl", label="Running"),
-                meta={"agent": "Claude Code", "status": "running", "demo": True},
-            )
-            frame.place_widget(ws, 0)
-            log.debug("Claude Code widget placed at key 0 on terminal %s (grid=%dx%d)",
-                      terminal_id, frame.rows, frame.cols)
-
-        log.info("Claude Code widget ready on %d terminal(s)", len(self._engine.list_terminals()))
+        log.info("Demo widget ready on %d terminal(s)", len(self._engine.list_terminals()))
 
     async def _start_connectors(self) -> None:
         """Start process scanner and file watcher."""
@@ -326,12 +324,18 @@ class VibeDeckSupervisor:
             ds = DisplayState(icon="🆕", color="#64748b", animation="pulse", label="Starting")
             ws = WidgetState(id=widget_id, type=WidgetType.AGENT, display=ds,
                              meta={"agent": agent_name, "pid": pid})
-            self._engine.upsert_widget(ws, terminal_id)
+            self._engine.pool_add(ws)  # pool only — user activates on terminals
 
         elif msg.type == MessageType.AGENT_OFFLINE:
             agent_name = msg.payload.get("agent_name", "unknown")
             pid = msg.payload.get("pid", 0)
             widget_id = msg.payload.get("widget_id", f"{agent_name}-{pid}")
+            # Update pool widget to offline
+            pool_ws = self._engine.pool_get(widget_id)
+            if pool_ws:
+                pool_ws.update_display(icon="⚫", color="#374151", animation="none", label="Offline")
+                self._engine.pool_add(pool_ws)
+            # Update terminal placements (same as before)
             frame = self._engine.get_frame(terminal_id)
             if frame:
                 existing = frame.widgets.get(widget_id)
@@ -374,6 +378,13 @@ class VibeDeckSupervisor:
 
             log.info("[HOOK→UI] display resolved → icon=%s color=%s anim=%s label=%s",
                      ds.icon, ds.color, ds.animation, ds.label)
+
+            # Keep pool in sync with the latest display state
+            pool_ws = WidgetState(id=widget_id, type=WidgetType.AGENT, display=ds, meta=data)
+            if _is_hook_event:
+                import time as _ptime
+                pool_ws._last_hook_ts = _ptime.time()
+            self._engine.pool_add(pool_ws)
 
             # ── Targeted widget update ──────────────────────────
             # Pre-refactor: looped over ALL terminals and auto-created
@@ -432,18 +443,8 @@ class VibeDeckSupervisor:
                 updated_tids.append(tid)
                 log.debug("[HOOK→UI] widget %s UPDATED on terminal %s", widget_id, tid)
 
-            # Auto-create the widget on the terminal the event targets
-            # (only if it didn't already exist there)
-            if terminal_id not in updated_tids:
-                frame = self._engine.get_frame(terminal_id)
-                if frame is not None and widget_id not in frame.widgets:
-                    if "badge" in data:
-                        ds.badge = str(data["badge"])
-                    ws = WidgetState(id=widget_id, type=WidgetType.AGENT, display=ds, meta=data)
-                    if _is_hook_event:
-                        ws._last_hook_ts = _time.time()
-                    self._engine.upsert_widget(ws, terminal_id)
-                    log.info("[HOOK→UI] new widget %s CREATED on terminal %s", widget_id, terminal_id)
+            # Widget stays in pool — user activates on terminals via UI/API.
+            # State updates to activated terminals are handled by the loop above.
 
         elif msg.type == MessageType.KEY_PRESSED:
             key = msg.payload.get("key", -1)

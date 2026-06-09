@@ -80,6 +80,10 @@ class VibeDeckWebServer:
         self._app.router.add_post("/api/appearance", self._save_appearance)
         self._app.router.add_get("/api/theme", self._get_theme)
         self._app.router.add_post("/api/theme", self._save_theme)
+        # Pool API
+        self._app.router.add_get("/api/pool", self._pool_list)
+        self._app.router.add_post("/api/pool/activate", self._pool_activate_handler)
+        self._app.router.add_post("/api/pool/deactivate", self._pool_deactivate_handler)
         self._app.router.add_static("/static/", STATIC_DIR, show_index=False)
 
     @property
@@ -547,6 +551,79 @@ class VibeDeckWebServer:
         theme_path = themes_dir / "default.css"
         theme_path.write_text(css, encoding="utf-8")
         log.info("Theme saved (%d chars)", len(css))
+        return web.json_response({"status": "ok"})
+
+
+    # ── Pool API ──────────────────────────────────
+
+    async def _pool_list(self, request: web.Request) -> web.Response:
+        """Return all widgets in the pool with activation status."""
+        widgets = []
+        for ws in self._engine.pool_list():
+            widgets.append({
+                "id": ws.id,
+                "type": ws.type.value,
+                "icon": ws.display.icon,
+                "color": ws.display.color,
+                "animation": ws.display.animation.value if hasattr(ws.display.animation, 'value') else str(ws.display.animation),
+                "label": ws.display.label,
+                "badge": ws.display.badge,
+                "meta": ws.meta,
+                "activated_on": self._engine.pool_activated_terminals(ws.id),
+            })
+        return web.json_response({"pool": widgets})
+
+    async def _pool_activate_handler(self, request: web.Request) -> web.Response:
+        """Activate a pool widget on a terminal."""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid JSON body"}, status=400)
+
+        widget_id = body.get("widget_id", "").strip()
+        terminal_id = body.get("terminal_id", "default")
+        key_index = body.get("key_index", None)
+
+        if not widget_id:
+            return web.json_response({"error": "widget_id is required"}, status=400)
+
+        ok = self._engine.pool_activate(widget_id, terminal_id, key_index)
+        if not ok:
+            return web.json_response(
+                {"error": f"failed to activate {widget_id!r} on {terminal_id!r}"},
+                status=404)
+
+        # Determine the key where the widget landed
+        frame = self._engine.get_frame(terminal_id)
+        placed_key = None
+        if frame:
+            try:
+                placed_key = frame.keymap.index(widget_id)
+            except ValueError:
+                for kw_id, kw_ws in frame.widgets.items():
+                    if kw_id == widget_id:
+                        placed_key = kw_ws.key_index
+                        break
+
+        log.info("Pool widget %r activated on terminal %r at key %s",
+                 widget_id, terminal_id, placed_key)
+        return web.json_response({"status": "ok", "key_index": placed_key})
+
+    async def _pool_deactivate_handler(self, request: web.Request) -> web.Response:
+        """Deactivate a pool widget from a terminal (widget stays in pool)."""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid JSON body"}, status=400)
+
+        widget_id = body.get("widget_id", "").strip()
+        terminal_id = body.get("terminal_id", "default")
+
+        if not widget_id:
+            return web.json_response({"error": "widget_id is required"}, status=400)
+
+        self._engine.pool_deactivate(widget_id, terminal_id)
+        log.info("Pool widget %r deactivated from terminal %r", widget_id, terminal_id)
         return web.json_response({"status": "ok"})
 
 

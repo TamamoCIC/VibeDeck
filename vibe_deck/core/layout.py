@@ -69,6 +69,8 @@ class LayoutEngine:
         # terminal_id → {layout_name → LayoutFrame}
         self._terminals: dict[str, dict[str, LayoutFrame]] = {}
         self._layout_name: str | None = None
+        # Widget Pool — all known widgets, regardless of terminal placement
+        self._pool: dict[str, WidgetState] = {}
         # Auto-register the default terminal
         self.register_terminal(DEFAULT_TERMINAL, rows, cols, display_name)
 
@@ -277,6 +279,9 @@ class LayoutEngine:
             return None
         frame = t[ACTIVE_LAYOUT]
 
+        # Keep pool in sync
+        self.pool_add(widget)
+
         existing = frame.widgets.get(widget.id)
         if existing is not None:
             existing.display = widget.display
@@ -328,6 +333,63 @@ class LayoutEngine:
         if t is None:
             return
         t[ACTIVE_LAYOUT].remove_widget(widget_id)
+
+    # ── Widget Pool ───────────────────────────────
+
+    def pool_add(self, ws: WidgetState) -> None:
+        """Add or update a widget in the pool (source of truth)."""
+        self._pool[ws.id] = ws
+
+    def pool_remove(self, widget_id: str) -> None:
+        """Remove a widget from the pool."""
+        self._pool.pop(widget_id, None)
+
+    def pool_get(self, widget_id: str) -> WidgetState | None:
+        """Get a widget from the pool by ID."""
+        return self._pool.get(widget_id)
+
+    def pool_list(self) -> list[WidgetState]:
+        """List all widgets currently in the pool."""
+        return list(self._pool.values())
+
+    def pool_activate(
+        self, widget_id: str, terminal_id: str, key_index: int | None = None
+    ) -> bool:
+        """Copy a pool widget onto a terminal's active frame.
+
+        If *key_index* is ``None``, the first empty key on the terminal
+        is used.  Returns ``True`` if the widget was placed, ``False``
+        if the pool widget is missing, the terminal is unknown, or no
+        empty key is available.
+        """
+        ws = self._pool.get(widget_id)
+        if ws is None:
+            return False
+        frame = self.get_frame(terminal_id)
+        if frame is None:
+            return False
+        if widget_id in frame.widgets:
+            return True  # already placed
+        if key_index is None:
+            key_index = frame.first_empty_key()
+        if key_index is None:
+            return False
+        frame.place_widget(ws, key_index)
+        return True
+
+    def pool_deactivate(self, widget_id: str, terminal_id: str) -> None:
+        """Remove a pool widget from a terminal (widget stays in pool)."""
+        self.remove_widget(widget_id, terminal_id)
+
+    def pool_is_activated(self, widget_id: str, terminal_id: str) -> bool:
+        """Return ``True`` if *widget_id* is placed on *terminal_id*."""
+        frame = self.get_frame(terminal_id)
+        return frame is not None and widget_id in frame.widgets
+
+    def pool_activated_terminals(self, widget_id: str) -> list[str]:
+        """Return terminal IDs where this pool widget is currently placed."""
+        return [tid for tid in self.list_terminals()
+                if self.pool_is_activated(widget_id, tid)]
 
     # ── Persistence ───────────────────────────────
 
