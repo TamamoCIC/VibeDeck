@@ -421,6 +421,7 @@ class LayoutEngine:
         LAYOUTS_DIR.mkdir(parents=True, exist_ok=True)
         for terminal_id, layouts in self._terminals.items():
             self._autosave_terminal(terminal_id)
+        self._autosave_pool()
 
     def _autosave_terminal(self, terminal_id: str) -> None:
         """Write one terminal's active frame to its autosave file."""
@@ -434,3 +435,60 @@ class LayoutEngine:
             t[ACTIVE_LAYOUT].to_yaml(str(path))
         except Exception:
             log.exception("Failed to autosave terminal %r", terminal_id)
+
+    def _autosave_pool(self) -> None:
+        """Persist the widget pool to ``_autosave-pool.yaml``."""
+        from ..config import LAYOUTS_DIR
+
+        LAYOUTS_DIR.mkdir(parents=True, exist_ok=True)
+        path = LAYOUTS_DIR / f"{AUTOSAVE_PREFIX}-pool.yaml"
+        try:
+            import yaml as _yaml
+            data = {"widgets": []}
+            for ws in self._pool.values():
+                data["widgets"].append({
+                    "id": ws.id,
+                    "type": ws.type.value,
+                    "icon": ws.display.icon,
+                    "color": ws.display.color,
+                    "animation": ws.display.animation.value if hasattr(ws.display.animation, 'value') else str(ws.display.animation),
+                    "label": ws.display.label,
+                    "badge": ws.display.badge,
+                    "meta": ws.meta,
+                })
+            path.write_text(_yaml.safe_dump(data, default_flow_style=False, allow_unicode=True, indent=2), encoding="utf-8")
+        except Exception:
+            log.exception("Failed to autosave pool")
+
+    def pool_restore(self) -> None:
+        """Restore pool widgets from ``_autosave-pool.yaml`` on startup."""
+        from ..config import LAYOUTS_DIR
+        from .types import DisplayState, WidgetState, WidgetType
+
+        path = LAYOUTS_DIR / f"{AUTOSAVE_PREFIX}-pool.yaml"
+        if not path.exists():
+            return
+        try:
+            import yaml as _yaml
+            data = _yaml.safe_load(path.read_text(encoding="utf-8"))
+            if not data or "widgets" not in data:
+                return
+            for wd in data["widgets"]:
+                ws = WidgetState(
+                    id=wd["id"],
+                    type=WidgetType(wd.get("type", "agent")),
+                    display=DisplayState(
+                        icon=wd.get("icon", ""),
+                        color=wd.get("color", "#374151"),
+                        animation=wd.get("animation", "none"),
+                        label=wd.get("label", "Offline"),
+                        badge=wd.get("badge"),
+                    ),
+                    meta=wd.get("meta", {}),
+                )
+                # Reset to offline on restore — avoid stale Running/Thinking
+                ws.update_display(icon=ws.display.icon, color="#374151", animation="none", label="Offline")
+                self._pool[ws.id] = ws
+            log.info("Pool restored: %d widget(s)", len(self._pool))
+        except Exception:
+            log.exception("Failed to restore pool from %s", path)

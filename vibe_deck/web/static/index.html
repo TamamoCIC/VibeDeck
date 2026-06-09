@@ -593,6 +593,7 @@ let currentDeck = '4x8', mode = 'live', sseRetryDelay = 1000;
 let selectedKeyIndex = null, selectedWidgetId = null;
 const visLog = [], VIS_LOG_MAX = 100;
 let selectedGrid = '4x8';
+let currentTerminalId = 'default';  // track active terminal for drag-drop
 
 // ═══════════════════════════════════════════════════
 // Sidebar sections
@@ -788,11 +789,12 @@ async function loadTerminalList() {
       el.innerHTML = '<p style="color:var(--text-dim);font-size:0.68rem">No terminals</p>';
       return;
     }
+    window._terminalList = terminals;  // cache for pool dropdown
     el.innerHTML = terminals.map(t => {
       const active = (t.token && t.token === currentToken) ? ' active' : '';
       const dotCls = t.widget_count > 0 ? 'active-dot' : 'idle-dot';
       const label = t.id === 'default' ? (getToken() ? 'Web Viewer' : t.name) : t.name;
-      return '<div class="term-item' + active + '" onclick="switchToTerminal(\'' + esc(t.token||'') + '\',\'' + esc(t.grid) + '\',\'' + esc(t.name) + '\')" title="' + esc(label) + '">' +
+      return '<div class="term-item' + active + '" onclick="switchToTerminal(\'' + esc(t.token||'') + '\',\'' + esc(t.grid) + '\',\'' + esc(t.name) + '\',\'' + esc(t.id) + '\')" title="' + esc(label) + '">' +
         '<span class="term-dot ' + dotCls + '"></span>' +
         '<span class="term-name">' + esc(label) + '</span>' +
         '<span class="term-grid">' + esc(t.grid) + '</span>' +
@@ -803,11 +805,12 @@ async function loadTerminalList() {
   }
 }
 
-function switchToTerminal(token, grid, name) {
+function switchToTerminal(token, grid, name, terminalId) {
   if (!token) return;
   // Close old SSE before switching
   if (window._sse) { window._sse.close(); window._sse = null; }
   saveToken(token);
+  currentTerminalId = terminalId || 'default';
   showApp(grid, name);
 }
 
@@ -852,7 +855,7 @@ function connectSSE() {
         // Cache meta from the frame if available
         if (data._meta) window._widgetMeta = data._meta;
         updateKeys(data.keys);
-        loadPool();  // keep pool in sync with frame updates
+        if (data._pool) renderPool(data._pool);  // real-time pool from SSE
         statusDot.className = 'status-dot online';
         statusLabel.textContent = 'Live';
         statusLabel.style.color = 'var(--accent)';
@@ -949,7 +952,7 @@ function showApp(grid, name) {
   changeDeck();
   connectSSE();
   loadTerminalList();
-  startPoolRefresh();
+  loadPoolOnce();
 }
 
 // ═══════════════════════════════════════════════════
@@ -958,75 +961,59 @@ function showApp(grid, name) {
 // ═══════════════════════════════════════════════════
 // Widget Pool
 // ═══════════════════════════════════════════════════
-async function loadPool() {
+function renderPool(widgets) {
   const el = document.getElementById('poolList');
   const count = document.getElementById('poolCount');
+  count.textContent = widgets.length;
+
+  if (widgets.length === 0) {
+    el.innerHTML = '<div style="color:var(--text-dim);font-size:0.68rem;padding:4px 8px">No widgets detected</div>';
+    return;
+  }
+
+  el.innerHTML = widgets.map(w => {
+    const activated = w.activated_on || [];
+    const statusLabel = activated.length > 0
+      ? 'on ' + activated.map(t => t === 'default' ? 'Web' : t.slice(0,6)).join(', ')
+      : 'unassigned';
+    const deactivateBtns = activated.map(tid =>
+      '<button class="pool-btn deactivate" onclick="event.stopPropagation();deactivateWidget(\'' + esc(w.id) + '\',\'' + esc(tid) + '\')" title="Remove from ' + esc(tid) + '">✕ ' + esc(tid === 'default' ? 'Web' : tid.slice(0,6)) + '</button>'
+    ).join('');
+
+    return '<div class="pool-item" draggable="true"' +
+      ' data-widget-id="' + esc(w.id) + '"' +
+      ' ondragstart="onPoolDragStart(event)"' +
+      ' ondragend="onPoolDragEnd(event)"' +
+      ' title="' + esc(w.id) + '">' +
+      '<span class="pool-dot" style="background:' + esc(w.color) + ';box-shadow:0 0 5px ' + esc(w.color) + '"></span>' +
+      '<span class="pool-icon">' + esc(w.icon) + '</span>' +
+      '<span class="pool-label">' + esc(w.label || w.id) + '</span>' +
+      '<span class="pool-status" style="color:' + (activated.length > 0 ? 'var(--accent)' : 'var(--text-dim)') + '">' + statusLabel + '</span>' +
+      '<span class="pool-actions">' + deactivateBtns +
+      (activated.length === 0
+        ? '<select class="pool-btn activate" onclick="event.stopPropagation()" onchange="activateOnTerminal(\'' + esc(w.id) + '\', this.value); this.value=\'\'" title="Place on terminal" style="font-size:0.55rem">' +
+          '<option value="">▸</option>' +
+          (window._terminalList || []).map(t => '<option value="' + esc(t.id) + '">' + esc(t.name || t.id) + '</option>').join('') +
+          '</select>'
+        : '') +
+      '</span>' +
+    '</div>';
+  }).join('');
+}
+
+// Load pool once at startup (before SSE connects), then SSE keeps it live
+async function loadPoolOnce() {
   try {
     const resp = await fetch('/api/pool');
-    if (!resp.ok) { el.innerHTML = '<div style="color:var(--text-dim);font-size:0.68rem;padding:4px 8px">Daemon offline</div>'; return; }
-    const data = await resp.json();
-    const widgets = data.pool || [];
-    count.textContent = widgets.length;
-
-    if (widgets.length === 0) {
-      el.innerHTML = '<div style="color:var(--text-dim);font-size:0.68rem;padding:4px 8px">No widgets detected</div>';
-      return;
+    if (resp.ok) {
+      const data = await resp.json();
+      renderPool(data.pool || []);
     }
-
-    el.innerHTML = widgets.map(w => {
-      const activated = w.activated_on || [];
-      const statusLabel = activated.length > 0
-        ? 'on ' + activated.map(t => t === 'default' ? 'Web' : t.slice(0,6)).join(', ')
-        : 'unassigned';
-      const statusCls = activated.length > 0 ? 'pool-status' : 'pool-status';
-      const deactivateBtns = activated.map(tid =>
-        '<button class="pool-btn deactivate" onclick="event.stopPropagation();deactivateWidget(\'' + esc(w.id) + '\',\'' + esc(tid) + '\')" title="Remove from ' + esc(tid) + '">✕ ' + esc(tid === 'default' ? 'Web' : tid.slice(0,6)) + '</button>'
-      ).join('');
-
-      return '<div class="pool-item" draggable="true"' +
-        ' data-widget-id="' + esc(w.id) + '"' +
-        ' ondragstart="onPoolDragStart(event)"' +
-        ' ondragend="onPoolDragEnd(event)"' +
-        ' onclick="onPoolClick(\'' + esc(w.id) + '\', ' + JSON.stringify(activated.map(String)) + ')"' +
-        ' title="' + esc(w.id) + '">' +
-        '<span class="pool-dot" style="background:' + esc(w.color) + ';box-shadow:0 0 5px ' + esc(w.color) + '"></span>' +
-        '<span class="pool-icon">' + esc(w.icon) + '</span>' +
-        '<span class="pool-label">' + esc(w.label || w.id) + '</span>' +
-        '<span class="pool-status" style="color:' + (activated.length > 0 ? 'var(--accent)' : 'var(--text-dim)') + '">' + statusLabel + '</span>' +
-        '<span class="pool-actions">' + deactivateBtns +
-        (activated.length === 0
-          ? '<button class="pool-btn activate" onclick="event.stopPropagation();activateWidget(\'' + esc(w.id) + '\')" title="Place on terminal">▸</button>'
-          : '') +
-        '</span>' +
-      '</div>';
-    }).join('');
-  } catch(e) {
-    el.innerHTML = '<div style="color:var(--text-dim);font-size:0.68rem;padding:4px 8px">Daemon offline</div>';
-  }
+  } catch(e) {}
 }
 
-// Auto-refresh pool every 3 seconds
-let _poolTimer = null;
-function startPoolRefresh() {
-  loadPool();
-  if (_poolTimer) clearInterval(_poolTimer);
-  _poolTimer = setInterval(loadPool, 3000);
-}
-
-async function activateWidget(widgetId) {
-  // Pick a terminal to activate on
-  const terminals = await getTerminals();
-  if (!terminals || terminals.length === 0) { toast('No terminals available', 'error'); return; }
-
-  // If only one terminal, auto-pick it
-  let terminalId = 'default';
-  if (terminals.length === 1) {
-    terminalId = terminals[0].id;
-  } else {
-    // Simple: use default for now. TODO: terminal picker UI.
-    terminalId = 'default';
-  }
-
+async function activateOnTerminal(widgetId, terminalId) {
+  if (!widgetId || !terminalId) return;
   try {
     const resp = await fetch('/api/pool/activate', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1034,8 +1021,7 @@ async function activateWidget(widgetId) {
     });
     const data = await resp.json();
     if (resp.ok) {
-      toast('Widget activated at key ' + (data.key_index != null ? data.key_index : '?'));
-      loadPool();
+      toast('Activated at key ' + (data.key_index != null ? data.key_index : '?'));
     } else {
       toast(data.error || 'Activation failed', 'error');
     }
@@ -1052,7 +1038,6 @@ async function deactivateWidget(widgetId, terminalId) {
     });
     if (resp.ok) {
       toast('Widget removed from ' + (terminalId === 'default' ? 'Web' : terminalId));
-      loadPool();
     }
   } catch(e) { toast('Deactivation failed', 'error'); }
 }
@@ -1100,7 +1085,7 @@ function setupDropTargets() {
       try {
         const resp = await fetch('/api/pool/activate', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ widget_id: widgetId, terminal_id: 'default', key_index: keyIndex }),
+          body: JSON.stringify({ widget_id: widgetId, terminal_id: currentTerminalId, key_index: keyIndex }),
         });
         const data = await resp.json();
         if (resp.ok) {

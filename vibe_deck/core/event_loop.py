@@ -112,6 +112,9 @@ class VibeDeckSupervisor:
             self._engine.register_terminal(t.id, rows, cols, t.name)
             log.debug("Synced terminal %r (id=%s, grid=%s)", t.name, t.id, t.grid)
 
+        # Restore pool from autosave
+        self._engine.pool_restore()
+
         # 1. Start Web Server (first so we can show status early)
         from ..web.server import VibeDeckWebServer
         self._web_server = VibeDeckWebServer(

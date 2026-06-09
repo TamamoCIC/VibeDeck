@@ -171,12 +171,28 @@ class VibeDeckWebServer:
             wid: ws.meta for wid, ws in frame.widgets.items()
         }
 
+        # Serialize pool data so the UI gets real-time pool updates
+        pool_widgets = []
+        for ws in self._engine.pool_list():
+            pool_widgets.append({
+                "id": ws.id,
+                "type": ws.type.value,
+                "icon": ws.display.icon,
+                "color": ws.display.color,
+                "animation": ws.display.animation.value if hasattr(ws.display.animation, 'value') else str(ws.display.animation),
+                "label": ws.display.label,
+                "badge": ws.display.badge,
+                "meta": ws.meta,
+                "activated_on": self._engine.pool_activated_terminals(ws.id),
+            })
+
         data = json.dumps({
             "type": "frame",
             "keys": keys,
             "display_name": frame.display_name,
             "terminal_id": terminal_id,
             "_meta": widget_meta,
+            "_pool": pool_widgets,
         })
 
         dead: list[web.StreamResponse] = []
