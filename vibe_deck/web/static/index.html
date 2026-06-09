@@ -63,6 +63,33 @@
   #left .sec-body { padding: 4px 10px 10px; font-size: 0.72rem; }
   #left .sec-body.show { display: block; }
 
+  /* Left sidebar — pool */
+  .pool-item {
+    display: flex; align-items: center; gap: 6px;
+    padding: 5px 8px; border-radius: 6px; cursor: grab;
+    transition: background 0.12s; margin-bottom: 2px;
+    position: relative;
+  }
+  .pool-item:hover { background: var(--surface); }
+  .pool-item:active { cursor: grabbing; }
+  .pool-item.dragging { opacity: 0.4; }
+  .pool-dot {
+    width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+  }
+  .pool-icon { font-size: 1rem; flex-shrink: 0; width: 20px; text-align: center; }
+  .pool-label { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:0.72rem; }
+  .pool-status { font-size:0.6rem; color:var(--text-dim); flex-shrink: 0; }
+  .pool-actions { display: flex; gap: 3px; flex-shrink: 0; }
+  .pool-btn {
+    background: var(--surface); color: var(--text); border: 1px solid var(--border);
+    padding: 1px 6px; border-radius: 4px; cursor: pointer; font-size: 0.6rem;
+    transition: all 0.12s;
+  }
+  .pool-btn:hover { border-color: var(--accent); }
+  .pool-btn.activate:hover { border-color: var(--accent); background: rgba(34,197,94,0.15); }
+  .pool-btn.deactivate { color: var(--text-dim); }
+  .pool-btn.deactivate:hover { border-color: var(--danger); color: var(--danger); background: rgba(239,68,68,0.1); }
+
   /* Left sidebar — terminals */
   .term-item {
     display: flex; align-items: center; gap: 6px;
@@ -340,6 +367,17 @@
     🦞 <span style="color:var(--accent)">VibeDeck</span>
   </div>
 
+  <!-- Widget Pool -->
+  <div class="sec" id="secPool">
+    <div class="sec-hdr" onclick="toggleSec('secPool')">
+      <span class="arrow">▼</span> 🏊 Widget Pool
+      <span style="margin-left:auto;font-size:0.6rem;color:var(--text-dim)" id="poolCount">0</span>
+    </div>
+    <div class="sec-body" id="poolList">
+      <div style="color:var(--text-dim);font-size:0.68rem;padding:4px 8px">Loading...</div>
+    </div>
+  </div>
+
   <!-- Terminals -->
   <div class="sec" id="secTerminals">
     <div class="sec-hdr" onclick="toggleSec('secTerminals')">
@@ -590,6 +628,7 @@ function buildGrid(deckType) {
     key.onclick = (e) => { e.preventDefault(); onKeyClick(i); };
     grid.appendChild(key);
   }
+  setupDropTargets();
 }
 
 function onKeyClick(i) {
@@ -813,6 +852,7 @@ function connectSSE() {
         // Cache meta from the frame if available
         if (data._meta) window._widgetMeta = data._meta;
         updateKeys(data.keys);
+        loadPool();  // keep pool in sync with frame updates
         statusDot.className = 'status-dot online';
         statusLabel.textContent = 'Live';
         statusLabel.style.color = 'var(--accent)';
@@ -909,11 +949,171 @@ function showApp(grid, name) {
   changeDeck();
   connectSSE();
   loadTerminalList();
+  startPoolRefresh();
 }
 
 // ═══════════════════════════════════════════════════
 // Init
 // ═══════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════
+// Widget Pool
+// ═══════════════════════════════════════════════════
+async function loadPool() {
+  const el = document.getElementById('poolList');
+  const count = document.getElementById('poolCount');
+  try {
+    const resp = await fetch('/api/pool');
+    if (!resp.ok) { el.innerHTML = '<div style="color:var(--text-dim);font-size:0.68rem;padding:4px 8px">Daemon offline</div>'; return; }
+    const data = await resp.json();
+    const widgets = data.pool || [];
+    count.textContent = widgets.length;
+
+    if (widgets.length === 0) {
+      el.innerHTML = '<div style="color:var(--text-dim);font-size:0.68rem;padding:4px 8px">No widgets detected</div>';
+      return;
+    }
+
+    el.innerHTML = widgets.map(w => {
+      const activated = w.activated_on || [];
+      const statusLabel = activated.length > 0
+        ? 'on ' + activated.map(t => t === 'default' ? 'Web' : t.slice(0,6)).join(', ')
+        : 'unassigned';
+      const statusCls = activated.length > 0 ? 'pool-status' : 'pool-status';
+      const deactivateBtns = activated.map(tid =>
+        '<button class="pool-btn deactivate" onclick="event.stopPropagation();deactivateWidget(\'' + esc(w.id) + '\',\'' + esc(tid) + '\')" title="Remove from ' + esc(tid) + '">✕ ' + esc(tid === 'default' ? 'Web' : tid.slice(0,6)) + '</button>'
+      ).join('');
+
+      return '<div class="pool-item" draggable="true"' +
+        ' data-widget-id="' + esc(w.id) + '"' +
+        ' ondragstart="onPoolDragStart(event)"' +
+        ' ondragend="onPoolDragEnd(event)"' +
+        ' onclick="onPoolClick(\'' + esc(w.id) + '\', ' + JSON.stringify(activated.map(String)) + ')"' +
+        ' title="' + esc(w.id) + '">' +
+        '<span class="pool-dot" style="background:' + esc(w.color) + ';box-shadow:0 0 5px ' + esc(w.color) + '"></span>' +
+        '<span class="pool-icon">' + esc(w.icon) + '</span>' +
+        '<span class="pool-label">' + esc(w.label || w.id) + '</span>' +
+        '<span class="pool-status" style="color:' + (activated.length > 0 ? 'var(--accent)' : 'var(--text-dim)') + '">' + statusLabel + '</span>' +
+        '<span class="pool-actions">' + deactivateBtns +
+        (activated.length === 0
+          ? '<button class="pool-btn activate" onclick="event.stopPropagation();activateWidget(\'' + esc(w.id) + '\')" title="Place on terminal">▸</button>'
+          : '') +
+        '</span>' +
+      '</div>';
+    }).join('');
+  } catch(e) {
+    el.innerHTML = '<div style="color:var(--text-dim);font-size:0.68rem;padding:4px 8px">Daemon offline</div>';
+  }
+}
+
+// Auto-refresh pool every 3 seconds
+let _poolTimer = null;
+function startPoolRefresh() {
+  loadPool();
+  if (_poolTimer) clearInterval(_poolTimer);
+  _poolTimer = setInterval(loadPool, 3000);
+}
+
+async function activateWidget(widgetId) {
+  // Pick a terminal to activate on
+  const terminals = await getTerminals();
+  if (!terminals || terminals.length === 0) { toast('No terminals available', 'error'); return; }
+
+  // If only one terminal, auto-pick it
+  let terminalId = 'default';
+  if (terminals.length === 1) {
+    terminalId = terminals[0].id;
+  } else {
+    // Simple: use default for now. TODO: terminal picker UI.
+    terminalId = 'default';
+  }
+
+  try {
+    const resp = await fetch('/api/pool/activate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ widget_id: widgetId, terminal_id: terminalId }),
+    });
+    const data = await resp.json();
+    if (resp.ok) {
+      toast('Widget activated at key ' + (data.key_index != null ? data.key_index : '?'));
+      loadPool();
+    } else {
+      toast(data.error || 'Activation failed', 'error');
+    }
+  } catch(e) {
+    toast('Activation failed', 'error');
+  }
+}
+
+async function deactivateWidget(widgetId, terminalId) {
+  try {
+    const resp = await fetch('/api/pool/deactivate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ widget_id: widgetId, terminal_id: terminalId }),
+    });
+    if (resp.ok) {
+      toast('Widget removed from ' + (terminalId === 'default' ? 'Web' : terminalId));
+      loadPool();
+    }
+  } catch(e) { toast('Deactivation failed', 'error'); }
+}
+
+async function getTerminals() {
+  try {
+    const resp = await fetch('/api/terminals');
+    const data = await resp.json();
+    return data.terminals || [];
+  } catch(e) { return null; }
+}
+
+function onPoolClick(widgetId, activatedOn) {
+  // Clicking an unassigned widget activates it
+  // Clicking an assigned widget shows options (already visible via buttons)
+}
+
+// ── Drag & Drop ──────────────────────────────────
+let _dragWidgetId = null;
+
+function onPoolDragStart(e) {
+  _dragWidgetId = e.target.closest('.pool-item')?.dataset?.widgetId;
+  if (_dragWidgetId) {
+    e.target.closest('.pool-item').classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', _dragWidgetId);
+  }
+}
+
+function onPoolDragEnd(e) {
+  e.target.closest('.pool-item')?.classList.remove('dragging');
+  _dragWidgetId = null;
+}
+
+// Make grid keys drop targets
+function setupDropTargets() {
+  document.querySelectorAll('.key').forEach(key => {
+    key.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; });
+    key.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      const keyIndex = parseInt(key.dataset.index);
+      const widgetId = e.dataTransfer.getData('text/plain') || _dragWidgetId;
+      if (!widgetId || keyIndex == null) return;
+
+      try {
+        const resp = await fetch('/api/pool/activate', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ widget_id: widgetId, terminal_id: 'default', key_index: keyIndex }),
+        });
+        const data = await resp.json();
+        if (resp.ok) {
+          toast('Widget placed at key ' + keyIndex);
+          loadPool();
+        } else {
+          toast(data.error || 'Placement failed', 'error');
+        }
+      } catch(e) { toast('Placement failed', 'error'); }
+    });
+  });
+}
+
 async function init() {
   const token = getToken();
   if (!token) {
