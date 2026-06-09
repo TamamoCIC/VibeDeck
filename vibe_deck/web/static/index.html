@@ -387,13 +387,14 @@
   </div>
 
   <!-- Developer -->
-  <div class="sec collapsed" id="secDev">
+  <div class="sec" id="secDev">
     <div class="sec-hdr" onclick="toggleSec('secDev')">
       <span class="arrow">▼</span> 🔧 Developer
     </div>
     <div class="sec-body" id="devBody">
       <p style="color:var(--text-dim);font-size:0.68rem">API: <code>localhost:9734</code></p>
       <button class="btn-sm" style="margin-top:6px" onclick="showWizard()">＋ New Virtual Terminal</button>
+      <button class="btn-sm" style="margin-top:4px;background:rgba(239,68,68,0.15);border-color:var(--danger);color:var(--danger);width:100%" onclick="shutdownDaemon()">⏻ Shutdown Daemon</button>
     </div>
   </div>
 
@@ -1130,6 +1131,22 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === 'm' || e.key === 'M') { toggleMode(); }
   else if (e.key === 'Escape') { deselectWidget(); }
 });
+
+// ═══════════════════════════════════════════════════
+// Shutdown
+// ═══════════════════════════════════════════════════
+async function shutdownDaemon() {
+  if (!confirm('Shut down the VibeDeck daemon?')) return;
+  try {
+    await fetch('/api/shutdown', { method: 'POST' });
+    toast('Shutting down...');
+    setTimeout(() => {
+      document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:var(--bg);color:var(--text-dim);font-size:1.2rem">🦞 VibeDeck stopped.<br><br><small>Close this tab.</small></div>';
+    }, 500);
+  } catch(e) {
+    toast('Shutdown failed', 'error');
+  }
+}
 
 // ═══════════════════════════════════════════════════
 // Modal helpers

@@ -51,12 +51,14 @@ class VibeDeckWebServer:
         port: int = 9734,
         expose: bool = False,
         bus=None,
+        shutdown_cb=None,
     ) -> None:
         self._engine = layout_engine
         self._registry = registry
         self._bus = bus
         self._port = port
         self._expose = expose
+        self._shutdown_cb = shutdown_cb
         self._app = web.Application()
         self._runner: web.AppRunner | None = None
         # Per-terminal SSE subscribers: terminal_id → list[StreamResponse]
@@ -84,6 +86,8 @@ class VibeDeckWebServer:
         self._app.router.add_get("/api/pool", self._pool_list)
         self._app.router.add_post("/api/pool/activate", self._pool_activate_handler)
         self._app.router.add_post("/api/pool/deactivate", self._pool_deactivate_handler)
+        # Shutdown
+        self._app.router.add_post("/api/shutdown", self._shutdown_handler)
         self._app.router.add_static("/static/", STATIC_DIR, show_index=False)
 
     @property
@@ -641,6 +645,16 @@ class VibeDeckWebServer:
         self._engine.pool_deactivate(widget_id, terminal_id)
         log.info("Pool widget %r deactivated from terminal %r", widget_id, terminal_id)
         return web.json_response({"status": "ok"})
+
+    # ── Shutdown ──────────────────────────────────
+
+    async def _shutdown_handler(self, request: web.Request) -> web.Response:
+        """Shut down the VibeDeck daemon gracefully."""
+        log.info("Shutdown requested via API")
+        if self._shutdown_cb:
+            import asyncio
+            asyncio.get_running_loop().call_soon(self._shutdown_cb)
+        return web.json_response({"status": "ok", "message": "Shutting down..."})
 
 
 # Default theme fallback (CSS custom properties)

@@ -118,7 +118,8 @@ class VibeDeckSupervisor:
         # 1. Start Web Server (first so we can show status early)
         from ..web.server import VibeDeckWebServer
         self._web_server = VibeDeckWebServer(
-            self._engine, self._registry, port=self._port, expose=self._expose, bus=self._bus
+            self._engine, self._registry, port=self._port, expose=self._expose, bus=self._bus,
+            shutdown_cb=lambda: self._shutdown_event.set(),
         )
         await self._web_server.start()
 
