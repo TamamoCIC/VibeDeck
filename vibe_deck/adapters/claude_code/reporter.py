@@ -53,10 +53,18 @@ def _vibedeck_home() -> Path:
 
 
 def _output_file() -> Path:
-    """Path to the Claude Code JSONL event stream."""
+    """Path to the Claude Code JSONL event stream.
+
+    Each Claude Code process gets its own file named ``claude-code-{ppid}.jsonl``
+    where *ppid* is the parent PID (Claude Code's PID).  This lets VibeDeck track
+    multiple Claude Code instances independently — each instance's hook events
+    land in a separate file, and the FileWatcher derives the widget_id from the
+    filename.
+    """
     agents_dir = _vibedeck_home() / "agents"
     agents_dir.mkdir(parents=True, exist_ok=True)
-    return agents_dir / "claude-code.jsonl"
+    pid = os.getppid()
+    return agents_dir / f"claude-code-{pid}.jsonl"
 
 
 def main() -> None:

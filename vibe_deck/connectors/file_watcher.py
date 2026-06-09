@@ -36,6 +36,28 @@ except ImportError:
     HAS_WATCHFILES = False
 
 
+def _parse_stem(stem: str) -> tuple[str, str, str]:
+    """Parse a JSONL/JSON file stem into (agent_name, pid_str, widget_id).
+
+    New format (multi-instance):
+      ``claude-code-12345``  →  (``claude-code``, ``12345``, ``claude-code-12345``)
+
+    Old format (single-instance, backward compat):
+      ``claude-code``        →  (``claude-code``, ``""``, ``claude-code-auto``)
+    """
+    import re as _re
+    m = _re.match(r"^(.+)-(\d+)$", stem)
+    if m:
+        agent_name = m.group(1)
+        pid = m.group(2)
+        widget_id = stem
+    else:
+        agent_name = stem
+        pid = ""
+        widget_id = f"{stem}-auto"
+    return agent_name, pid, widget_id
+
+
 class FileWatcher(BaseConnector):
     """
     Watches the agent status directory for file changes.
@@ -124,20 +146,22 @@ class FileWatcher(BaseConnector):
         self, change_type: watchfiles.Change, path: Path
     ) -> None:
         """Process a single-key JSON status file."""
+        agent_name, pid, widget_id = _parse_stem(path.stem)
         try:
             if change_type in (watchfiles.Change.added, watchfiles.Change.modified):
                 data = json.loads(path.read_text(encoding="utf-8"))
                 await self._publish(
                     MessageType.WIDGET_STATE_UPDATE,
                     {
-                        "agent_name": path.stem,
+                        "agent_name": agent_name,
+                        "widget_id": widget_id,
                         "data": data,
                     },
                 )
             elif change_type == watchfiles.Change.deleted:
                 await self._publish(
                     MessageType.WIDGET_REMOVED,
-                    {"agent_name": path.stem},
+                    {"agent_name": agent_name, "widget_id": widget_id},
                 )
         except json.JSONDecodeError:
             log.warning("Invalid JSON in status file: %s", path)
@@ -159,9 +183,10 @@ class FileWatcher(BaseConnector):
         After reading, truncates the file if it exceeds MAX_JSONL_LINES.
         """
         if change_type == watchfiles.Change.deleted:
+            agent_name, pid, widget_id = _parse_stem(path.stem)
             await self._publish(
                 MessageType.WIDGET_REMOVED,
-                {"agent_name": path.stem},
+                {"agent_name": agent_name, "widget_id": widget_id},
             )
             self._offsets.pop(path.name, None)
             return
@@ -200,6 +225,7 @@ class FileWatcher(BaseConnector):
             # Publish each new line in order so every state transition
             # (including brief ones like UserPromptSubmit → Waiting) is
             # pushed to the UI for at least one frame.
+            agent_name, pid, widget_id = _parse_stem(path.stem)
             published = 0
             for line in new_lines:
                 try:
@@ -219,7 +245,8 @@ class FileWatcher(BaseConnector):
                 await self._publish(
                     MessageType.WIDGET_STATE_UPDATE,
                     {
-                        "agent_name": path.stem,
+                        "agent_name": agent_name,
+                        "widget_id": widget_id,
                         "data": data,
                     },
                 )
@@ -266,10 +293,12 @@ class FileWatcher(BaseConnector):
                 hook_event or "(none)", session_id,
             )
 
+            agent_name, pid, widget_id = _parse_stem(path.stem)
             await self._publish(
                 MessageType.WIDGET_STATE_UPDATE,
                 {
-                    "agent_name": path.stem,
+                    "agent_name": agent_name,
+                    "widget_id": widget_id,
                     "data": data,
                 },
             )

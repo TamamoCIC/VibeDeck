@@ -38,7 +38,7 @@ class ProcessScanner(BaseConnector):
         super().__init__("process-scanner", bus)
         self._patterns = patterns
         self._interval = interval
-        self._known: dict[str, psutil.Process] = {}  # agent_name → process
+        self._known: dict[int, tuple[str, psutil.Process]] = {}  # pid → (agent_name, process)
         self._task: asyncio.Task | None = None
 
     async def start(self) -> None:
@@ -70,7 +70,7 @@ class ProcessScanner(BaseConnector):
 
     async def _scan_once(self) -> None:
         """Single scan iteration."""
-        current: dict[str, psutil.Process] = {}
+        current: dict[int, tuple[str, psutil.Process]] = {}
 
         for proc in psutil.process_iter(["pid", "name", "cmdline"]):
             try:
@@ -93,25 +93,30 @@ class ProcessScanner(BaseConnector):
                             import re
                             if not re.search(pattern.cmdline_regex, cmdline_str):
                                 continue
-                        current[pattern.name] = proc
+                        current[proc.pid] = (pattern.name, proc)
+                        break  # first matching pattern wins
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
 
         # Detect new agents
-        for name, proc in current.items():
-            if name not in self._known:
-                log.info("Agent detected: %s (pid=%s)", name, proc.pid)
+        for pid, (name, proc) in current.items():
+            if pid not in self._known:
+                log.info("Agent detected: %s (pid=%s)", name, pid)
                 await self._publish(MessageType.AGENT_ONLINE, {
                     "agent_name": name,
-                    "pid": proc.pid,
+                    "pid": pid,
+                    "widget_id": f"{name}-{pid}",
                 })
 
         # Detect gone agents
-        for name in list(self._known):
-            if name not in current:
-                log.info("Agent gone: %s", name)
+        for pid in list(self._known):
+            if pid not in current:
+                gone_name = self._known[pid][0]
+                log.info("Agent gone: %s (pid=%s)", gone_name, pid)
                 await self._publish(MessageType.AGENT_OFFLINE, {
-                    "agent_name": name,
+                    "agent_name": gone_name,
+                    "pid": pid,
+                    "widget_id": f"{gone_name}-{pid}",
                 })
 
         self._known = current

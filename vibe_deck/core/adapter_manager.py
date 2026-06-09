@@ -31,14 +31,15 @@ class AdapterManager:
     Watches the MessageBus for AGENT_ONLINE / AGENT_OFFLINE and manages
     adapter instances.
 
-    Each adapter runs as a background asyncio task. When the agent
-    process exits, the adapter is stopped and cleaned up.
+    Each adapter runs as a background asyncio task, keyed by PID so
+    multiple instances of the same agent type can coexist.  When the
+    agent process exits, the adapter is stopped and cleaned up.
     """
 
     def __init__(self, bus: MessageBus) -> None:
         self._bus = bus
-        self._adapters: dict[str, Any] = {}  # agent_name → adapter instance
-        self._tasks: dict[str, asyncio.Task] = {}  # agent_name → task
+        self._adapters: dict[int, Any] = {}  # pid → adapter instance
+        self._tasks: dict[int, asyncio.Task] = {}  # pid → task
         self._queue: asyncio.Queue | None = None
         self._running = False
         self._consumer_task: asyncio.Task | None = None
@@ -61,11 +62,11 @@ class AdapterManager:
                 pass
 
         # Stop all running adapters
-        for name, adapter in list(self._adapters.items()):
+        for pid, adapter in list(self._adapters.items()):
             try:
                 await adapter.stop()
             except Exception:
-                log.debug("Error stopping adapter %r", name, exc_info=True)
+                log.debug("Error stopping adapter pid=%d", pid, exc_info=True)
         self._adapters.clear()
         self._tasks.clear()
 
@@ -73,32 +74,36 @@ class AdapterManager:
             self._bus.unsubscribe("adapter-manager")
         log.info("AdapterManager stopped")
 
-    async def start_adapter(self, agent_name: str, **kwargs) -> Any | None:
-        """Create and start an adapter for the given agent."""
+    async def start_adapter(self, agent_name: str, *, pid: int = 0, **kwargs) -> Any | None:
+        """Create and start an adapter for the given agent process.
+
+        Adapters are keyed by *pid* so multiple instances of the same
+        agent type (e.g. two Claude Code sessions) coexist independently.
+        """
         adapter_cls = _ADAPTER_REGISTRY.get(agent_name)
         if adapter_cls is None:
             log.debug("No adapter registered for agent %r", agent_name)
             return None
 
-        if agent_name in self._adapters:
-            log.debug("Adapter for %r already running", agent_name)
-            return self._adapters[agent_name]
+        if pid and pid in self._adapters:
+            log.debug("Adapter for %r (pid=%d) already running", agent_name, pid)
+            return self._adapters[pid]
 
         try:
-            adapter = adapter_cls(name=agent_name, bus=self._bus, **kwargs)
-            self._adapters[agent_name] = adapter
+            adapter = adapter_cls(name=agent_name, bus=self._bus, pid=pid, **kwargs)
+            self._adapters[pid] = adapter
             task = asyncio.create_task(adapter.start())
-            self._tasks[agent_name] = task
-            log.info("Adapter started: %s", agent_name)
+            self._tasks[pid] = task
+            log.info("Adapter started: %s (pid=%d)", agent_name, pid)
             return adapter
         except Exception:
-            log.exception("Failed to start adapter for %r", agent_name)
+            log.exception("Failed to start adapter for %r (pid=%d)", agent_name, pid)
             return None
 
-    async def stop_adapter(self, agent_name: str) -> None:
-        """Stop and remove an adapter."""
-        adapter = self._adapters.pop(agent_name, None)
-        task = self._tasks.pop(agent_name, None)
+    async def stop_adapter(self, pid: int) -> None:
+        """Stop and remove the adapter for the given PID."""
+        adapter = self._adapters.pop(pid, None)
+        task = self._tasks.pop(pid, None)
         if adapter:
             try:
                 await adapter.stop()
@@ -115,12 +120,12 @@ class AdapterManager:
                 if msg.type == MessageType.AGENT_ONLINE:
                     agent_name = msg.payload.get("agent_name", "")
                     pid = msg.payload.get("pid", 0)
-                    if agent_name:
+                    if agent_name and pid:
                         await self.start_adapter(agent_name, pid=pid)
                 elif msg.type == MessageType.AGENT_OFFLINE:
-                    agent_name = msg.payload.get("agent_name", "")
-                    if agent_name:
-                        await self.stop_adapter(agent_name)
+                    pid = msg.payload.get("pid", 0)
+                    if pid:
+                        await self.stop_adapter(pid)
             except asyncio.TimeoutError:
                 continue
             except asyncio.CancelledError:

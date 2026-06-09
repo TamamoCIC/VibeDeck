@@ -183,10 +183,10 @@ class VibeDeckSupervisor:
                 continue
 
             ws = WidgetState(
-                id="claude-code-auto",
+                id="claude-code-demo",
                 type=WidgetType.AGENT,
                 display=DisplayState(icon="🐙", color="#22c55e", animation="crawl", label="Running"),
-                meta={"agent": "Claude Code", "status": "running"},
+                meta={"agent": "Claude Code", "status": "running", "demo": True},
             )
             frame.place_widget(ws, 0)
             log.debug("Claude Code widget placed at key 0 on terminal %s (grid=%dx%d)",
@@ -314,7 +314,7 @@ class VibeDeckSupervisor:
         if msg.type == MessageType.AGENT_ONLINE:
             agent_name = msg.payload.get("agent_name", "unknown")
             pid = msg.payload.get("pid", 0)
-            widget_id = f"{agent_name}-auto"
+            widget_id = msg.payload.get("widget_id", f"{agent_name}-{pid}")
 
             log.info("[AGENT] %s detected (pid=%d) → widget %s on terminal %r",
                      agent_name, pid, widget_id, terminal_id)
@@ -330,7 +330,8 @@ class VibeDeckSupervisor:
 
         elif msg.type == MessageType.AGENT_OFFLINE:
             agent_name = msg.payload.get("agent_name", "unknown")
-            widget_id = f"{agent_name}-auto"
+            pid = msg.payload.get("pid", 0)
+            widget_id = msg.payload.get("widget_id", f"{agent_name}-{pid}")
             frame = self._engine.get_frame(terminal_id)
             if frame:
                 existing = frame.widgets.get(widget_id)
@@ -340,7 +341,7 @@ class VibeDeckSupervisor:
         elif msg.type == MessageType.WIDGET_STATE_UPDATE:
             agent_name = msg.payload.get("agent_name", "unknown")
             data = msg.payload.get("data", {})
-            widget_id = msg.payload.get("widget_id", f"{agent_name}-auto")
+            widget_id = msg.payload.get("widget_id", f"{agent_name}-auto")  # -auto fallback for old-format files
 
             _hook_event = data.get("hook_event_name", "")
             _tool_name = data.get("tool_name", "")
@@ -458,7 +459,7 @@ class VibeDeckSupervisor:
 
         elif msg.type == MessageType.WIDGET_REMOVED:
             agent_name = msg.payload.get("agent_name", "unknown")
-            widget_id = f"{agent_name}-auto"
+            widget_id = msg.payload.get("widget_id", f"{agent_name}-auto")  # -auto fallback for old-format files
             self._engine.remove_widget(widget_id, terminal_id)
 
         # ── Reset thinking timer + activity timestamp ──────
