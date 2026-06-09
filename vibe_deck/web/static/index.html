@@ -97,7 +97,10 @@
     width: 100%; padding: 10px 20px;
     display: flex; align-items: center; gap: 12px;
     border-bottom: 1px solid var(--border);
-    background: var(--panel); flex-shrink: 0;
+    background: rgba(26,26,46,0.85);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    flex-shrink: 0;
   }
   #topbar .title { font-weight: 700; font-size: 0.95rem; }
   #topbar .title span { color: var(--accent); }
@@ -121,8 +124,12 @@
     width: 100%; overflow: auto;
   }
   .deck-wrapper {
-    background: #0a0a14; padding: 12px; border-radius: 16px;
-    box-shadow: 0 8px 40px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.03);
+    background: #08080f; padding: 14px; border-radius: 18px;
+    box-shadow:
+      0 12px 60px rgba(0,0,0,0.7),
+      inset 0 1px 0 rgba(255,255,255,0.04),
+      inset 0 0 0 1px rgba(255,255,255,0.02);
+    border: 1px solid #111;
   }
   .deck-grid { display: grid; gap: 5px; }
   .key {
@@ -137,14 +144,15 @@
     background: linear-gradient(135deg, rgba(255,255,255,0.08) 0%, transparent 50%);
     pointer-events: none;
   }
-  .key:hover { filter: brightness(1.25); box-shadow: 0 0 12px rgba(255,255,255,0.08); }
-  .key:active { transform: scale(0.92); }
+  .key:hover { filter: brightness(1.25); box-shadow: 0 0 12px rgba(255,255,255,0.08); transform: translateY(-2px); }
+  .key:active { transform: scale(0.92) translateY(0); transition: transform 0.06s; }
   .key.selected { box-shadow: 0 0 0 2px var(--accent), 0 0 12px rgba(34,197,94,0.3); }
   .key .icon { font-size: 1.6rem; line-height:1; pointer-events:none; }
   .key .label {
     font-size:0.58rem; margin-top:3px; text-align:center;
     max-width:64px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
     pointer-events:none; opacity:0.9;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.6);
   }
   .key .badge {
     position:absolute; top:4px; right:5px; background:var(--danger);
@@ -165,12 +173,14 @@
 
   /* Empty state */
   .empty-state {
-    text-align:center; padding:40px; color:var(--text-dim);
+    text-align:center; padding:48px; color:var(--text-dim);
     grid-column:1/-1; align-self:center;
   }
-  .empty-state .empty-icon { font-size:2.5rem; margin-bottom:12px; }
-  .empty-state p { margin:4px 0; font-size:0.9rem; }
-  .empty-state .tip { font-size:0.75rem; color:#555; margin-top:8px; }
+  .empty-state .empty-icon { font-size:3rem; margin-bottom:14px; opacity:0.5; }
+  .empty-state .empty-icon.wiggle { animation: wiggle 3s ease-in-out infinite; }
+  .empty-state p { margin:6px 0; font-size:0.85rem; }
+  .empty-state .tip { font-size:0.72rem; color:#555; margin-top:10px; }
+  @keyframes wiggle { 0%,100%{transform:rotate(0)} 25%{transform:rotate(2deg)} 75%{transform:rotate(-2deg)} }
 
   /* Right sidebar */
   #right {
@@ -208,19 +218,45 @@
   .modal {
     position:fixed; inset:0; z-index:200; background:rgba(0,0,0,0.6);
     display:flex; align-items:center; justify-content:center;
+    animation: fadeIn 0.2s ease;
   }
+  .modal.closing { animation: fadeOut 0.15s ease forwards; }
   .modal-card {
     background:var(--panel); border:1px solid var(--border);
     border-radius:14px; max-width:480px; width:90%; max-height:80vh; overflow-y:auto;
+    animation: slideUp 0.25s cubic-bezier(0.16,1,0.3,1);
   }
+  .modal.closing .modal-card { animation: slideDown 0.15s ease forwards; }
+  @keyframes fadeIn { from{opacity:0} to{opacity:1} }
+  @keyframes fadeOut { from{opacity:1} to{opacity:0} }
+  @keyframes slideUp { from{opacity:0;transform:translateY(24px) scale(0.96)} to{opacity:1;transform:translateY(0) scale(1)} }
+  @keyframes slideDown { from{opacity:1;transform:translateY(0) scale(1)} to{opacity:0;transform:translateY(24px) scale(0.96)} }
   .modal-header, .modal-footer { padding:12px 18px; display:flex; align-items:center; justify-content:space-between; }
   .modal-header { border-bottom:1px solid var(--border); }
   .modal-header h3 { font-size:0.95rem; margin:0; }
   .modal-footer { border-top:1px solid var(--border); }
-  .modal-close { background:none; border:none; color:var(--text-dim); font-size:1.1rem; cursor:pointer; padding:4px 8px; border-radius:4px; }
-  .modal-close:hover { background:var(--surface); }
+  .modal-close { background:none; border:none; color:var(--text-dim); font-size:1.1rem; cursor:pointer; padding:4px 8px; border-radius:4px; transition: all 0.15s; }
+  .modal-close:hover { background:var(--surface); color:var(--text); }
   .modal-body { padding:14px 18px; }
   .dim { color:var(--text-dim); font-size:0.85rem; }
+
+  /* Toast */
+  #toastContainer {
+    position:fixed; bottom:20px; right:20px; z-index:999;
+    display:flex; flex-direction:column-reverse; gap:8px; pointer-events:none;
+  }
+  .toast {
+    background:var(--panel); border:1px solid var(--border);
+    color:var(--text); padding:10px 16px; border-radius:8px;
+    font-size:0.8rem; box-shadow:0 4px 20px rgba(0,0,0,0.5);
+    animation: toastIn 0.3s cubic-bezier(0.16,1,0.3,1);
+    pointer-events:auto; max-width:320px;
+  }
+  .toast.out { animation: toastOut 0.2s ease forwards; }
+  .toast.success { border-left:3px solid var(--accent); }
+  .toast.error { border-left:3px solid var(--danger); }
+  @keyframes toastIn { from{opacity:0;transform:translateX(60px)} to{opacity:1;transform:translateX(0)} }
+  @keyframes toastOut { from{opacity:1;transform:translateX(0)} to{opacity:0;transform:translateX(60px)} }
 
   /* Wizard */
   .wizard-container {
@@ -279,6 +315,15 @@
     .key { width: 48px; height: 48px; font-size: 1rem; }
     .key .icon { font-size: 1.1rem; }
   }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar { width:6px; height:6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #3a3a5a; }
+
+  /* Selection */
+  ::selection { background: var(--accent); color: #000; }
 </style>
 </head>
 <body>
@@ -363,7 +408,7 @@
     <div class="deck-wrapper">
       <div class="deck-grid" id="deck">
         <div class="empty-state">
-          <div class="empty-icon">🦞</div>
+          <div class="empty-icon wiggle">🦞</div>
           <p><strong>No agents detected</strong></p>
           <p>Start Claude Code, OpenCode, or another supported agent.</p>
           <p class="tip">Run <code>vibe-deck serve --demo</code> for sample widgets.</p>
@@ -484,7 +529,24 @@
 </div>
 </div>
 
+<!-- Toast container -->
+<div id="toastContainer"></div>
+
 <script>
+// ═══════════════════════════════════════════════════
+// Toast notifications
+// ═══════════════════════════════════════════════════
+function toast(msg, type='success') {
+  const container = document.getElementById('toastContainer');
+  const el = document.createElement('div');
+  el.className = 'toast ' + type; el.textContent = msg;
+  container.appendChild(el);
+  setTimeout(() => {
+    el.classList.add('out');
+    el.addEventListener('animationend', () => el.remove());
+  }, 2200);
+}
+
 // ═══════════════════════════════════════════════════
 // State
 // ═══════════════════════════════════════════════════
@@ -887,8 +949,23 @@ document.addEventListener('keydown', (e) => {
 // ═══════════════════════════════════════════════════
 // Modal helpers
 // ═══════════════════════════════════════════════════
-function closeModal(id) { document.getElementById(id).style.display = 'none'; }
-document.addEventListener('click', (e) => { if (e.target.classList.contains('modal')) e.target.style.display = 'none'; });
+function closeModal(id) {
+  const modal = document.getElementById(id);
+  modal.classList.add('closing');
+  modal.addEventListener('animationend', () => {
+    modal.style.display = 'none';
+    modal.classList.remove('closing');
+  }, { once: true });
+}
+document.addEventListener('click', (e) => {
+  if (e.target.classList.contains('modal') && !e.target.classList.contains('closing')) {
+    e.target.classList.add('closing');
+    e.target.addEventListener('animationend', () => {
+      e.target.style.display = 'none';
+      e.target.classList.remove('closing');
+    }, { once: true });
+  }
+});
 function esc(s) { return (s||'').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
 // ═══════════════════════════════════════════════════
@@ -927,7 +1004,8 @@ async function saveAppearance() {
   try {
     await fetch('/api/appearance', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({events}) });
     closeModal('visualModal');
-  } catch(e) {}
+    toast('Appearance saved');
+  } catch(e) { toast('Save failed', 'error'); }
 }
 
 // ═══════════════════════════════════════════════════
@@ -961,7 +1039,8 @@ async function saveTheme() {
     await fetch('/api/theme', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({css}) });
     document.querySelectorAll('#themeBody input[type=text]').forEach(txt => { document.documentElement.style.setProperty(txt.dataset.txt, txt.value); });
     closeModal('themeModal');
-  } catch(e) {}
+    toast('Theme saved');
+  } catch(e) { toast('Save failed', 'error'); }
 }
 
 // ═══════════════════════════════════════════════════
@@ -973,7 +1052,8 @@ async function saveLayout() {
   try {
     await fetch('/api/layouts/save', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, terminal_id:'default'}) });
     closeModal('saveModal');
-  } catch(e) {}
+    toast('Layout “' + name + '” saved');
+  } catch(e) { toast('Save failed', 'error'); }
 }
 
 async function showLoadDialog() {
@@ -996,7 +1076,8 @@ async function loadLayoutByName(name) {
   try {
     await fetch('/api/layouts/load', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, terminal_id:'default'}) });
     closeModal('loadModal');
-  } catch(e) {}
+    toast('Layout “' + name + '” loaded');
+  } catch(e) { toast('Load failed', 'error'); }
 }
 </script>
 </body>
