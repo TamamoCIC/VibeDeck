@@ -30,9 +30,9 @@ APPEARANCE_CONFIG_PATH = Path.home() / ".vibe-deck" / "adapters" / "claude-code.
 _BUILTIN_STATUS_TO_DISPLAY: dict[str, dict[str, str]] = {
     "SessionStart":     {"icon": "🐙", "color": "#22c55e", "animation": "crawl",  "label": "Running"},
     "Stop":             {"icon": "🐙", "color": "#475569", "animation": "none",   "label": "Idle"},
-    "UserPromptSubmit": {"icon": "🐙", "color": "#eab308", "animation": "blink",  "label": "Waiting"},
-    "PreToolUse":       {"icon": "🐙", "color": "#22c55e", "animation": "crawl",  "label": "Tool"},
-    "PostToolUse":      {"icon": "🐙", "color": "#22c55e", "animation": "crawl",  "label": "Running"},
+    "UserPromptSubmit": {"icon": "🐙", "color": "#eab308", "animation": "blink",  "label": "Waiting", "min_display_ms": "600"},
+    "PreToolUse":       {"icon": "🐙", "color": "#22c55e", "animation": "crawl",  "label": "Tool",    "min_display_ms": "800"},
+    "PostToolUse":      {"icon": "🐙", "color": "#22c55e", "animation": "crawl",  "label": "Running", "min_display_ms": "800"},
     "PreCompact":       {"icon": "🐙", "color": "#6366f1", "animation": "pulse",  "label": "Compact"},
     "SubagentStop":     {"icon": "🐙", "color": "#475569", "animation": "none",   "label": "Sub done"},
     "SessionEnd":       {"icon": "⚫", "color": "#374151", "animation": "none",   "label": "Offline"},
@@ -43,6 +43,15 @@ _BUILTIN_STATUS_TO_DISPLAY: dict[str, dict[str, str]] = {
     "writing":          {"icon": "🐙", "color": "#3b82f6", "animation": "pulse",  "label": "Writing"},
     "error":            {"icon": "🔴", "color": "#ef4444", "animation": "blink",  "label": "Error"},
     "offline":          {"icon": "⚫", "color": "#374151", "animation": "none",   "label": "Offline"},
+}
+
+# ── Built-in timing defaults (overridable via YAML) ─
+
+_BUILTIN_TIMING: dict[str, int] = {
+    "thinking_timeout_ms": 800,       # silence before transitioning to "Thinking"
+    "activity_window_ms": 3000,       # fast frame-rate window after last hook
+    "slow_frame_interval_ms": 1000,   # idle frame push interval (~1 fps)
+    "fast_frame_interval_ms": 33,     # active frame push interval (~30 fps)
 }
 
 
@@ -63,6 +72,22 @@ def _load_appearance_config() -> dict[str, dict[str, str]]:
     return dict(_BUILTIN_STATUS_TO_DISPLAY)
 
 
+def _load_timing_config() -> dict[str, int]:
+    """Load timing config from YAML, falling back to built-in defaults."""
+    try:
+        if APPEARANCE_CONFIG_PATH.exists():
+            raw = yaml.safe_load(APPEARANCE_CONFIG_PATH.read_text(encoding="utf-8"))
+            if raw and "timing" in raw:
+                loaded = {k: int(v) for k, v in raw["timing"].items()}
+                merged = dict(_BUILTIN_TIMING)
+                merged.update(loaded)
+                return merged
+    except Exception:
+        log.debug("Failed to load timing config, using built-in defaults",
+                   exc_info=True)
+    return dict(_BUILTIN_TIMING)
+
+
 def _save_appearance_config(events: dict[str, dict[str, str]]) -> None:
     """Persist appearance config to YAML."""
     APPEARANCE_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -73,6 +98,20 @@ def _save_appearance_config(events: dict[str, dict[str, str]]) -> None:
 
 # Active config — loaded at import time, reloadable
 STATUS_TO_DISPLAY: dict[str, dict[str, str]] = _load_appearance_config()
+TIMING: dict[str, int] = _load_timing_config()
+
+
+def get_min_display_ms(hook_event: str) -> int:
+    """Return the minimum display duration (ms) for a hook event.
+
+    Looks up ``min_display_ms`` in the event's appearance config.
+    Returns 0 if no minimum is configured (instant transition).
+    """
+    cfg = STATUS_TO_DISPLAY.get(hook_event, {})
+    try:
+        return int(cfg.get("min_display_ms", 0))
+    except (ValueError, TypeError):
+        return 0
 
 
 class ClaudeCodeAdapter:

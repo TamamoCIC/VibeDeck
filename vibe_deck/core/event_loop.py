@@ -85,6 +85,9 @@ class VibeDeckSupervisor:
         self._thinking_timer_lock = asyncio.Lock()
         self._last_hook_activity: float = 0.0  # monotonic timestamp of last hook event
         self._last_autosave: float = 0.0  # monotonic timestamp of last autosave (debounce)
+        self._next_thinking_fire_at: float = 0.0  # monotonic: when the thinking timer will fire
+        self._scanner = None     # ProcessScanner instance (set by _start_connectors)
+        self._watcher = None     # FileWatcher instance (set by _start_connectors)
 
     # ── Public API ─────────────────────────────────
 
@@ -204,11 +207,11 @@ class VibeDeckSupervisor:
 
         config = load_config()
 
-        scanner = ProcessScanner(self._bus, patterns=config.agent_patterns)
-        watcher = FileWatcher(self._bus)
+        self._scanner = ProcessScanner(self._bus, patterns=config.agent_patterns)
+        self._watcher = FileWatcher(self._bus)
 
-        self._tasks.append(asyncio.create_task(scanner.start()))
-        self._tasks.append(asyncio.create_task(watcher.start()))
+        self._tasks.append(asyncio.create_task(self._scanner.start()))
+        self._tasks.append(asyncio.create_task(self._watcher.start()))
 
         log.info("Connectors started (scanner + file watcher)")
 
@@ -237,13 +240,23 @@ class VibeDeckSupervisor:
     async def _frame_push_loop(self) -> None:
         """Adaptive frame-rate push loop.
 
-        - 30 fps while agents are active (hook events within last 3s)
-        -  1 fps when all agents are idle
+        Frame rate and activity window are controlled by the Claude Code
+        adapter's timing config (``TIMING`` dict, overridable via YAML).
+
+        Each frame includes ``_debug`` timing info so the Web UI can
+        surface real-time latency diagnostics (hook age, thinking timer,
+        frame rate).
         """
         import time as _time
-        FAST_INTERVAL = 1.0 / 30   # ~33ms
-        SLOW_INTERVAL = 1.0        # 1s when idle
-        ACTIVITY_WINDOW = 3.0      # seconds
+        from ..adapters.claude_code import TIMING
+
+        fast_ms = TIMING.get("fast_frame_interval_ms", 33)
+        slow_ms = TIMING.get("slow_frame_interval_ms", 1000)
+        activity_ms = TIMING.get("activity_window_ms", 3000)
+
+        FAST_INTERVAL = fast_ms / 1000.0
+        SLOW_INTERVAL = slow_ms / 1000.0
+        ACTIVITY_WINDOW = activity_ms / 1000.0
 
         try:
             while not self._shutdown_event.is_set():
@@ -251,11 +264,20 @@ class VibeDeckSupervisor:
                 active = (now - self._last_hook_activity) < ACTIVITY_WINDOW
                 interval = FAST_INTERVAL if active else SLOW_INTERVAL
 
+                hook_age_ms = (now - self._last_hook_activity) * 1000
+                thinking_ms = max(0, (self._next_thinking_fire_at - now) * 1000)
+                debug_info = {
+                    "hook_age_ms": round(hook_age_ms, 1),
+                    "frame_rate": "fast" if active else "slow",
+                    "interval_ms": round(interval * 1000, 1),
+                    "thinking_ms": round(thinking_ms, 0) if thinking_ms > 0 else 0,
+                }
+
                 for terminal_id in self._engine.list_terminals():
                     frame = self._engine.get_frame(terminal_id)
                     if frame is None:
                         continue
-                    await self._web_server.broadcast_frame(terminal_id, frame)
+                    await self._web_server.broadcast_frame(terminal_id, frame, debug_info)
                     if self._render == "hardware" and hasattr(self, '_renderer'):
                         if hasattr(self._renderer, 'render_frame'):
                             self._renderer.render_frame(frame)
@@ -414,18 +436,19 @@ class VibeDeckSupervisor:
 
                 now = _time.time()
 
-                # ── Waiting-state minimum display duration ──────────
-                MIN_WAITING_DISPLAY_S = 0.6
+                # ── Minimum display duration (from adapter config) ─
+                from ..adapters.claude_code import get_min_display_ms
+                _WAITING_MIN_S = get_min_display_ms("UserPromptSubmit") / 1000.0
 
                 if _hook_event == "UserPromptSubmit":
                     existing._waiting_since = now
 
                 if (_hook_event in ("PreToolUse", "PostToolUse")
                         and hasattr(existing, '_waiting_since')
-                        and (now - existing._waiting_since) < MIN_WAITING_DISPLAY_S):
+                        and (now - existing._waiting_since) < _WAITING_MIN_S):
                     existing._pending_display = ds
                     existing._pending_meta = data
-                    remaining = MIN_WAITING_DISPLAY_S - (now - existing._waiting_since)
+                    remaining = _WAITING_MIN_S - (now - existing._waiting_since)
                     log.info("[HOOK→UI] deferring %s display for %.2fs (Waiting grace period)",
                              _hook_event, remaining)
                     self._schedule_deferred_display(tid, widget_id, remaining)
@@ -444,6 +467,10 @@ class VibeDeckSupervisor:
                 existing.meta.update(data)
                 if _is_hook_event:
                     existing._last_hook_ts = _time.time()
+                # Track tool-name updates so the thinking timer can respect
+                # a minimum display duration before overwriting with "Thinking".
+                if _hook_event in ("PreToolUse", "PostToolUse"):
+                    existing._last_tool_ts = _time.time()
                 updated_tids.append(tid)
                 log.debug("[HOOK→UI] widget %s UPDATED on terminal %s", widget_id, tid)
 
@@ -547,14 +574,20 @@ class VibeDeckSupervisor:
 
     # ── Thinking / Writing timeout detection ─────────
 
-    THINKING_TIMEOUT_S = 0.8  # seconds of silence before "Thinking"
-
     async def _reset_thinking_timer(self, terminal_id: str) -> None:
         """Reset the inactivity timer.  If no new hook event arrives for
-        THINKING_TIMEOUT_S seconds, apply "Thinking" state to widgets on
+        ``thinking_timeout_ms``, apply "Thinking" state to widgets on
         ALL terminals and force-push frames so every connected device
-        sees it."""
+        sees it.
+
+        All timing parameters are read from the Claude Code adapter's
+        ``TIMING`` config (overridable via ``claude-code.yaml``).
+        """
         import asyncio
+        import time as _ptime
+        from ..adapters.claude_code import TIMING, STATUS_TO_DISPLAY, get_min_display_ms
+
+        timeout_s = TIMING.get("thinking_timeout_ms", 800) / 1000.0
 
         async with self._thinking_timer_lock:
             if self._thinking_timer and not self._thinking_timer.done():
@@ -564,10 +597,13 @@ class VibeDeckSupervisor:
                 except asyncio.CancelledError:
                     pass
 
+            # Track when the thinking timer will fire (for debug UI)
+            self._next_thinking_fire_at = _ptime.monotonic() + timeout_s
+
             async def _fire_thinking():
-                await asyncio.sleep(self.THINKING_TIMEOUT_S)
+                await asyncio.sleep(timeout_s)
+                self._next_thinking_fire_at = 0.0  # timer fired, reset
                 from .types import DisplayState
-                from ..adapters.claude_code import STATUS_TO_DISPLAY
                 thinking_cfg = STATUS_TO_DISPLAY.get("thinking", {"icon": "🐙", "color": "#7c3aed", "animation": "pulse", "label": "Thinking"})
                 # Update all terminals that have agent widgets — targeted,
                 # does NOT auto-create widgets on terminals that don't
@@ -580,15 +616,22 @@ class VibeDeckSupervisor:
                     for widget_id, ws in list(frame.widgets.items()):
                         current_label = ws.display.label
                         current_anim = ws.display.animation.value if hasattr(ws.display.animation, 'value') else str(ws.display.animation)
+                        # Definitive states — never overwrite.
                         if current_label in ("Idle", "Offline", "Error", "Sub done"):
                             continue
                         if current_anim in ("blink",):
                             continue
+                        # Respect per-event min_display_ms from adapter config.
+                        if hasattr(ws, '_last_tool_ts'):
+                            tool_age_s = _ptime.time() - ws._last_tool_ts
+                            min_display_s = get_min_display_ms("PreToolUse") / 1000.0
+                            if tool_age_s < min_display_s:
+                                continue  # tool name is still fresh
                         ds = DisplayState(**thinking_cfg)
                         ws.display = ds
                         pushed = True
                         log.info("[THINKING] widget %s → Thinking (%.1fs silence on terminal %s)",
-                                 widget_id, self.THINKING_TIMEOUT_S, tid)
+                                 widget_id, timeout_s, tid)
                     # Force immediate frame push for terminals that changed
                     if pushed and hasattr(self, '_web_server'):
                         await self._web_server.broadcast_frame(tid, frame)
@@ -596,49 +639,99 @@ class VibeDeckSupervisor:
             self._thinking_timer = asyncio.create_task(_fire_thinking())
 
     async def _shutdown(self) -> None:
-        """Gracefully shut down all components."""
+        """Gracefully shut down all components.
+
+        Order matters here:
+
+        1. Cancel the thinking timer (no more Thinking state pushes).
+        2. Stop *producers* (connectors) so no new events arrive.
+        3. Stop *adapters* (publish one final Offline state, then stop).
+        4. Cancel all supervisor-owned background tasks.
+        5. Tear down the web server and render targets.
+        6. Persist layout state.
+        """
         log.info("Shutting down...")
 
-        # 0. Stop AdapterManager
+        # ── 1. Cancel thinking timer ──────────────────
+        if self._thinking_timer and not self._thinking_timer.done():
+            self._thinking_timer.cancel()
+
+        # ── 2. Stop connectors (scanner + watcher) ────
+        #    Must come first so no new messages enter the bus during teardown.
+        #    Each .stop() cancels the connector's internal asyncio task.
+        if self._scanner:
+            try:
+                await self._scanner.stop()
+            except Exception:
+                log.debug("Scanner stop error (ignored)", exc_info=True)
+        if self._watcher:
+            try:
+                await self._watcher.stop()
+            except Exception:
+                log.debug("Watcher stop error (ignored)", exc_info=True)
+
+        # ── 3. Stop adapters ──────────────────────────
         if hasattr(self, '_adapter_manager'):
             try:
                 await self._adapter_manager.stop()
             except Exception:
                 log.debug("AdapterManager stop error (ignored)", exc_info=True)
 
-        # 0.5 Persist current layout state before tearing down
-        try:
-            self._engine.autosave_all()
-            log.info("Layout state autosaved on shutdown")
-        except Exception:
-            log.debug("Autosave error (ignored)", exc_info=True)
-
-        # 1. Close SSE connections first (prevents aiohttp InvalidStateError on Windows)
-        if hasattr(self, '_web_server'):
-            self._web_server.close_sse_connections()
-
-        # 2. Cancel all background tasks
+        # ── 4. Cancel all supervisor background tasks ──
+        #    _frame_push_loop, _message_consumer, deferred-display tasks, etc.
         for task in self._tasks:
             if not task.done():
                 task.cancel()
         if self._tasks:
-            await asyncio.gather(*self._tasks, return_exceptions=True)
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*self._tasks, return_exceptions=True),
+                    timeout=5.0,
+                )
+            except asyncio.TimeoutError:
+                log.warning("Timed out waiting for background tasks to finish")
+            except Exception:
+                log.debug("Error gathering background tasks (ignored)", exc_info=True)
 
-        # 3. Stop web server
+        # ── 5. Close SSE connections ───────────────────
+        #    Closes all active SSE streams before tearing down the server.
+        if hasattr(self, '_web_server'):
+            self._web_server.close_sse_connections()
+
+        # ── 6. Stop web server ────────────────────────
         if hasattr(self, '_web_server'):
             try:
-                await self._web_server.stop()
+                await asyncio.wait_for(
+                    self._web_server.stop(), timeout=5.0
+                )
+            except asyncio.TimeoutError:
+                log.warning("Timed out waiting for web server to stop")
             except Exception:
                 log.debug("Web server stop error (ignored)", exc_info=True)
 
-        # 4. Close hardware
+        # ── 7. Close hardware renderer ─────────────────
         if hasattr(self, '_renderer') and hasattr(self._renderer, 'close'):
             try:
                 self._renderer.close()
             except Exception:
                 pass
 
+        # ── 8. Persist layout state ────────────────────
+        try:
+            self._engine.autosave_all()
+            log.info("Layout state autosaved on shutdown")
+        except Exception:
+            log.debug("Autosave error (ignored)", exc_info=True)
+
         log.info("Shutdown complete")
+        # Force the process to exit after a short grace period.
+        # asyncio.run()'s internal cleanup (_cancel_all_tasks,
+        # shutdown_asyncgens) can hang on Windows due to third-party
+        # async generators (e.g. watchfiles) or aiohttp-internal tasks
+        # that don't respond to cancellation.  All important state has
+        # already been persisted by this point, so a forced exit is safe.
+        import os as _os
+        _os._exit(0)
 
 
 async def run_supervisor(

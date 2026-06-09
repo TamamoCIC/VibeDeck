@@ -438,6 +438,7 @@
     <div class="status-row">
       <span class="status-dot waiting" id="statusDot"></span>
       <span id="statusLabel" style="color:var(--text-dim)">Connecting...</span>
+      <span style="font-size:0.65rem;color:#444;font-family:monospace;margin-left:8px" id="headerDebug" title="hook age / thinking / fps"></span>
     </div>
     <span style="font-size:0.7rem;color:var(--text-dim)" id="headerName"></span>
   </div>
@@ -861,6 +862,14 @@ function connectSSE() {
         statusLabel.textContent = 'Live';
         statusLabel.style.color = 'var(--accent)';
         document.getElementById('headerName').textContent = data.display_name || '';
+        // Debug overlay: real-time timing diagnostics (hook age / thinking / fps)
+        if (data._debug && data._debug.hook_age_ms != null) {
+          const d = data._debug;
+          const ageS = (d.hook_age_ms / 1000).toFixed(1);
+          const thinkS = d.thinking_ms ? (d.thinking_ms / 1000).toFixed(1) + 's→T' : '–';
+          document.getElementById('headerDebug').textContent =
+            'hook:' + ageS + 's think:' + thinkS + ' fps:' + d.frame_rate;
+        }
       }
     } catch(e) {}
   };

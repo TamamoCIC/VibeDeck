@@ -39,14 +39,18 @@ except ImportError:
 def _parse_stem(stem: str) -> tuple[str, str, str]:
     """Parse a JSONL/JSON file stem into (agent_name, pid_str, widget_id).
 
-    New format (multi-instance):
+    New format (multi-instance, actual Claude Code PID):
       ``claude-code-12345``  →  (``claude-code``, ``12345``, ``claude-code-12345``)
+
+    Fallback format (session_id suffix, hex — when process-tree walk fails):
+      ``claude-code-a1b2c3d4``  →  (``claude-code``, ``a1b2c3d4``, ``claude-code-a1b2c3d4``)
 
     Old format (single-instance, backward compat):
       ``claude-code``        →  (``claude-code``, ``""``, ``claude-code-auto``)
     """
     import re as _re
-    m = _re.match(r"^(.+)-(\d+)$", stem)
+    # Matches both decimal PIDs (e.g. 12345) and 8-char hex session IDs (e.g. a1b2c3d4)
+    m = _re.match(r"^(.+)-(\d+|[0-9a-fA-F]{8})$", stem)
     if m:
         agent_name = m.group(1)
         pid = m.group(2)

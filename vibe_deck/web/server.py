@@ -156,7 +156,7 @@ class VibeDeckWebServer:
 
     # ── Frame broadcast ────────────────────────────
 
-    async def broadcast_frame(self, terminal_id: str = "default", frame=None) -> None:
+    async def broadcast_frame(self, terminal_id: str = "default", frame=None, debug_info: dict | None = None) -> None:
         """Push a LayoutFrame to SSE subscribers for a specific terminal."""
         clients = self._clients.get(terminal_id, [])
         if not clients:
@@ -197,6 +197,7 @@ class VibeDeckWebServer:
             "terminal_id": terminal_id,
             "_meta": widget_meta,
             "_pool": pool_widgets,
+            "_debug": debug_info or {},
         })
 
         dead: list[web.StreamResponse] = []
