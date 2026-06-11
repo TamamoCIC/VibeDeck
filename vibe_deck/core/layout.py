@@ -437,11 +437,7 @@ class LayoutEngine:
             log.exception("Failed to autosave terminal %r", terminal_id)
 
     def _autosave_pool(self) -> None:
-        """Persist the widget pool to ``_autosave-pool.yaml``.
-
-        Test widgets (``meta.test_widget == True``) are skipped so they
-        don't survive daemon restarts.
-        """
+        """Persist the widget pool to ``_autosave-pool.yaml``."""
         from ..config import LAYOUTS_DIR
 
         LAYOUTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -450,8 +446,6 @@ class LayoutEngine:
             import yaml as _yaml
             data = {"widgets": []}
             for ws in self._pool.values():
-                if ws.meta.get("test_widget") is True:
-                    continue
                 data["widgets"].append({
                     "id": ws.id,
                     "type": ws.type.value,

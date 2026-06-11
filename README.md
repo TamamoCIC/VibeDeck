@@ -23,8 +23,8 @@ pip install "vibe-deck[deck]"
 # List connected devices
 vibe-deck info
 
-# Run the demo
-vibe-deck demo
+# Start the daemon (virtual-only, no hardware required)
+vibe-deck serve --no-physical
 
 # Or just listen for key events
 vibe-deck listen
@@ -37,7 +37,7 @@ vibe-deck listen
 ### Roadmap
 
 - [x] Stream Deck hardware abstraction layer
-- [x] CLI for device discovery, demo, and key listening
+- [x] CLI for device discovery and key listening
 - [ ] AI service monitor (local LLM dashboard on deck)
 - [ ] MaidLLM integration (start/stop services from deck)
 - [ ] Custom profile system (pageable key layouts)

@@ -45,7 +45,6 @@ def main():
     _serve_parser(sub)
     _status_parser(sub)
     _whoami_parser(sub)
-    _demo_parser(sub)
     _widget_parser(sub)
     _layout_parser(sub)
     _adapter_parser(sub)
@@ -70,7 +69,6 @@ def main():
         "serve": cmd_serve,
         "status": cmd_status,
         "whoami": cmd_whoami,
-        "demo": cmd_demo,
         "widget": cmd_widget,
         "layout": cmd_layout,
         "adapter": cmd_adapter,
@@ -104,14 +102,13 @@ def _setup_parser(sub):
 
 def _serve_parser(sub):
     p = sub.add_parser("serve", help="Start the VibeDeck daemon",
-        description="Start the VibeDeck daemon with Web UI. Use --demo for sample widgets.",
-        epilog="Example: vibe-deck serve --demo --port 9734")
+        description="Start the VibeDeck daemon with Web UI.",
+        epilog="Example: vibe-deck serve --port 9734")
     p.add_argument("--port", type=int, default=9734, help="HTTP server port (default: 9734)")
     p.add_argument("--render", choices=["sim", "hardware"], default="sim",
                    help="[DEPRECATED] Render target. Use --no-physical instead")
     p.add_argument("--device", type=int, default=0, help="Stream Deck device index")
     p.add_argument("--no-autodetect", action="store_true", help="Disable agent auto-discovery")
-    p.add_argument("--demo", action="store_true", help="Start with sample widgets for development")
     p.add_argument("--expose", action="store_true", help="Bind to 0.0.0.0 (allow LAN connections)")
     p.add_argument("--no-physical", action="store_true", help="Skip Stream Deck hardware detection (virtual-only mode)")
 
@@ -133,11 +130,6 @@ def _whoami_parser(sub):
                    help="Machine-readable JSON output")
     p.add_argument("--port", type=int, default=9734,
                    help="Daemon port (default: 9734)")
-
-
-def _demo_parser(sub):
-    sub.add_parser("demo", help="Start daemon with demo widgets (alias for serve --demo)",
-        description="Start VibeDeck in demo mode with sample widgets. Equivalent to: vibe-deck serve --demo")
 
 
 def _widget_parser(sub):
@@ -239,9 +231,8 @@ def cmd_serve(args):
     expose = getattr(args, 'expose', False)
     no_physical = getattr(args, 'no_physical', False)
     host = "0.0.0.0" if expose else "localhost"
-    mode = "demo" if args.demo else "live"
     print(f"\n🦞  VibeDeck {__version__}")
-    print(f"   Mode:     {mode} {'(sample widgets)' if args.demo else '(agent detection active)'}")
+    print(f"   Mode:     live (agent detection active)")
     print(f"   Render:   {'virtual-only' if no_physical else args.render}")
     print(f"   Web UI:   http://{host}:{args.port}")
     print(f"   LAN:      {'yes' if expose else 'no (--expose to enable)'}")
@@ -266,22 +257,11 @@ def cmd_serve(args):
             render=args.render,
             device_index=args.device,
             autodetect=not args.no_autodetect,
-            demo=args.demo,
             expose=getattr(args, 'expose', False),
             no_physical=getattr(args, 'no_physical', False),
         ))
     except KeyboardInterrupt:
         print("\n👋 VibeDeck stopped.")
-
-
-def cmd_demo(args):
-    """Start daemon in demo mode."""
-    ns = argparse.Namespace(
-        port=9734, render="sim", device=0,
-        no_autodetect=True, demo=True,
-        expose=False, no_physical=True,
-    )
-    cmd_serve(ns)
 
 
 def cmd_status(args):
@@ -332,7 +312,7 @@ def cmd_status(args):
             print(f" {a['name']:<19} {icon:<6} {a['status']:<14}")
     else:
         print("   No agents detected.")
-        print("   Start a supported agent or run: vibe-deck demo")
+        print("   Start a supported agent (Claude Code, OpenCode, etc.)")
     print()
 
     # QR Code for reconnection (uses current LAN IP)

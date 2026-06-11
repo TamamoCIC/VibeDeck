@@ -361,6 +361,31 @@
 
   /* Selection */
   ::selection { background: var(--accent); color: #000; }
+
+  /* ── Developer Toggle Switches ── */
+  .dev-toggle-row { padding: 4px 0; }
+  .dev-toggle { display: flex; align-items: center; justify-content: space-between; cursor: pointer; }
+  .toggle-label { font-size: 0.7rem; color: var(--text); }
+  .toggle-switch { position: relative; width: 36px; height: 20px; flex-shrink: 0; }
+  .toggle-switch input { opacity: 0; width: 0; height: 0; }
+  .toggle-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 20px; transition: 0.2s; }
+  .toggle-slider:before { content: ""; position: absolute; height: 14px; width: 14px;
+    left: 2px; bottom: 2px; background: var(--text-dim); border-radius: 50%; transition: 0.2s; }
+  .toggle-switch input:checked + .toggle-slider { background: var(--accent); border-color: var(--accent); }
+  .toggle-switch input:checked + .toggle-slider:before { transform: translateX(16px); background: #000; }
+
+  /* ── Hardware Simulation Mode ── */
+  .deck-grid.hw-sim-keys .key {
+    width: var(--hw-key-size, 96px);
+    height: var(--hw-key-size, 96px);
+    border-radius: 12px;
+  }
+  .deck-grid.hw-sim-keys .key .icon { font-size: calc(var(--hw-key-size, 96px) * 0.45); }
+  .deck-grid.hw-sim-keys .key .label { font-size: calc(var(--hw-key-size, 96px) * 0.12); }
+  #center.hw-sim .deck-wrapper { background: #1a1a1a; border: 3px solid #333; border-radius: 16px;
+    padding: 16px; box-shadow: 0 8px 32px rgba(0,0,0,0.5); }
+  .deck-wrapper.no-bezel { background: transparent; border: none; box-shadow: none; padding: 0; border-radius: 0; }
 </style>
 </head>
 <body>
@@ -402,10 +427,24 @@
       <span class="arrow">▼</span> 🔧 Developer
     </div>
     <div class="sec-body" id="devBody">
-      <p style="color:var(--text-dim);font-size:0.68rem;margin-bottom:6px" id="devStatus">Ready.</p>
-      <button class="btn-sm" style="width:100%;margin-top:4px;border-color:var(--accent);color:var(--accent)" onclick="devInjectWidget()">▶ Inject Test Widget</button>
-      <button class="btn-sm" style="width:100%;margin-top:4px" onclick="devCycleState()">↻ Cycle State</button>
-      <button class="btn-sm" style="width:100%;margin-top:4px;background:rgba(239,68,68,0.1);border-color:var(--danger);color:var(--danger)" onclick="devRemoveTestWidgets()">✕ Remove Test Widgets</button>
+      <div class="dev-toggle-row">
+        <label class="dev-toggle">
+          <span class="toggle-label">Simulate Hardware Output</span>
+          <div class="toggle-switch">
+            <input type="checkbox" id="hwSimToggle" onchange="toggleHardwareSim()">
+            <span class="toggle-slider"></span>
+          </div>
+        </label>
+      </div>
+      <div class="dev-toggle-row">
+        <label class="dev-toggle">
+          <span class="toggle-label">Show Device Bezel</span>
+          <div class="toggle-switch">
+            <input type="checkbox" id="showBezelToggle" onchange="toggleBezel()" checked>
+            <span class="toggle-slider"></span>
+          </div>
+        </label>
+      </div>
       <hr style="border-color:var(--border);margin:8px 0">
       <button class="btn-sm" style="width:100%;margin-top:4px" onclick="showWizard()">＋ New Virtual Terminal</button>
       <button class="btn-sm" style="width:100%;margin-top:4px" onclick="shutdownDaemon()">⏻ Shutdown Daemon</button>
@@ -466,7 +505,6 @@
           <div class="empty-icon wiggle">🦞</div>
           <p><strong>No agents detected</strong></p>
           <p>Start Claude Code, OpenCode, or another supported agent.</p>
-          <p class="tip">Run <code>vibe-deck serve --demo</code> for sample widgets.</p>
         </div>
       </div>
     </div>
@@ -1216,71 +1254,39 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ═══════════════════════════════════════════════════
+// Developer Tools — Hardware Simulation
 // ═══════════════════════════════════════════════════
-// Developer Tools
-// ═══════════════════════════════════════════════════
-let devCycleIdx = 0;
-const devStates = [
-  { icon: '🐙', color: '#22c55e', animation: 'crawl',  label: 'Running',  sprite: 'test_bounce' },
-  { icon: '🐙', color: '#7c3aed', animation: 'pulse',  label: 'Thinking', sprite: 'test_bounce' },
-  { icon: '🐙', color: '#eab308', animation: 'blink',  label: 'Waiting',  sprite: 'test_bounce' },
-  { icon: '🐙', color: '#166534', animation: 'none',   label: 'Idle',     sprite: 'none' },
-];
-let devWidgetId = null;
+let hardwareSimMode = false;
+let showBezel = true;
 
-async function devInjectWidget() {
-  // Clean up any old test widgets first to free key 0
-  await fetch('/api/debug/test-widgets', { method: 'DELETE' });
-  devWidgetId = null;
+function toggleHardwareSim() {
+  hardwareSimMode = document.getElementById('hwSimToggle').checked;
+  const deck = document.getElementById('deck');
+  const center = document.getElementById('center');
 
-  const state = devStates[devCycleIdx];
-  try {
-    const resp = await fetch('/api/debug/inject-widget', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key_index: 0, display: state }),
-    });
-    const data = await resp.json();
-    if (data.error) { throw new Error(data.error); }
-    devWidgetId = data.widget_id;
-    document.getElementById('devStatus').textContent =
-      'Widget: ' + data.widget_id + ' @ key ' + data.key_index + ' | sprite: ' + state.sprite;
-  } catch(e) {
-    document.getElementById('devStatus').textContent = 'Error: ' + e.message;
-  }
-}
-
-function devCycleState() {
-  devCycleIdx = (devCycleIdx + 1) % devStates.length;
-  const state = devStates[devCycleIdx];
-  if (devWidgetId) {
-    // Re-inject with same id to update the existing widget
-    fetch('/api/debug/inject-widget', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ widget_id: devWidgetId, display: state }),
-    }).then(r => r.json()).then(data => {
-      document.getElementById('devStatus').textContent =
-        'State: ' + state.label + ' | sprite: ' + state.sprite;
-    }).catch(e => {
-      document.getElementById('devStatus').textContent = 'Error: ' + e.message;
-    });
+  if (hardwareSimMode) {
+    center.classList.add('hw-sim');
+    deck.classList.add('hw-sim-keys');
+    applyHardwareKeySize();
   } else {
-    document.getElementById('devStatus').textContent =
-      'Next state: ' + state.label + ' (click Inject first)';
+    center.classList.remove('hw-sim');
+    deck.classList.remove('hw-sim-keys');
+    deck.style.removeProperty('--hw-key-size');
   }
 }
 
-async function devRemoveTestWidgets() {
-  try {
-    const resp = await fetch('/api/debug/test-widgets', { method: 'DELETE' });
-    const data = await resp.json();
-    devWidgetId = null;
-    document.getElementById('devStatus').textContent =
-      'Removed: ' + (data.removed || []).join(', ') || 'none';
-  } catch(e) {
-    document.getElementById('devStatus').textContent = 'Error: ' + e.message;
-  }
+function applyHardwareKeySize() {
+  // Map grid dimensions to hardware-accurate key sizes (matches sim.py presets)
+  const gridType = selectedGrid || '4x8';
+  const sizes = { '4x8': 96, '3x5': 72, '3x2': 80, '2x4': 80, '3x4': 100, '1x3': 96 };
+  const px = sizes[gridType] || 72;
+  document.getElementById('deck').style.setProperty('--hw-key-size', px + 'px');
+}
+
+function toggleBezel() {
+  showBezel = document.getElementById('showBezelToggle').checked;
+  const wrapper = document.querySelector('.deck-wrapper');
+  if (wrapper) wrapper.classList.toggle('no-bezel', !showBezel);
 }
 
 // Shutdown

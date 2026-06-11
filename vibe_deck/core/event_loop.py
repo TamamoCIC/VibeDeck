@@ -65,7 +65,6 @@ class VibeDeckSupervisor:
         render: str = "sim",
         device_index: int = 0,
         autodetect: bool = True,
-        demo: bool = False,
         expose: bool = False,
         no_physical: bool = False,
     ) -> None:
@@ -73,7 +72,6 @@ class VibeDeckSupervisor:
         self._render = render
         self._device_index = device_index
         self._autodetect = autodetect
-        self._demo = demo
         self._expose = expose
         self._no_physical = no_physical
 
@@ -102,8 +100,8 @@ class VibeDeckSupervisor:
 
     async def start(self) -> None:
         """Start all components and run until shutdown."""
-        log.info("VibeDeck supervisor starting (port=%d, render=%s, demo=%s, expose=%s)",
-                 self._port, self._render, self._demo, self._expose)
+        log.info("VibeDeck supervisor starting (port=%d, render=%s, expose=%s)",
+                 self._port, self._render, self._expose)
 
         # 0. Load Terminal Registry and sync with LayoutEngine
         from .terminal_registry import TerminalRegistry
@@ -159,17 +157,13 @@ class VibeDeckSupervisor:
         if self._autodetect:
             await self._start_connectors()
 
-        # 5. Demo mode: populate sample widgets (only if --demo)
-        if self._demo:
-            self._setup_demo_widgets()
-
-        # 6. Start Render Engine
+        # 5. Start Render Engine
         await self._start_renderer()
 
-        # 7. Start frame push loop
+        # 6. Start frame push loop
         self._tasks.append(asyncio.create_task(self._frame_push_loop()))
 
-        # 8. Start message consumer loop
+        # 7. Start message consumer loop
         self._tasks.append(asyncio.create_task(self._message_consumer()))
 
         log.info("Supervisor ready — waiting for agents...")
@@ -187,37 +181,6 @@ class VibeDeckSupervisor:
         self._shutdown_event.set()
 
     # ── Internals ──────────────────────────────────
-
-    def _setup_demo_widgets(self) -> None:
-        """Populate a demo Claude Code widget on all registered terminals.
-
-        The widget lives in the pool and is activated on every terminal
-        at key 0 so the Stream Deck / phone simulator shows live
-        hook-driven status:
-          SessionStart       → 🐙 green crawl  "Running"
-          UserPromptSubmit   → 🐙 yellow blink "Waiting"
-          PreToolUse         → 🐙 green crawl  tool name
-          PostToolUse        → 🐙 green crawl  tool name
-          Stop               → 🐙 dim green    "Idle"
-        """
-        from .types import DisplayState, WidgetState, WidgetType
-
-        ws = WidgetState(
-            id="claude-code-demo",
-            type=WidgetType.AGENT,
-            display=DisplayState(
-                icon="🐙", color="#22c55e", animation="crawl",
-                label="Running", sprite="test_bounce",
-            ),
-            meta={"agent": "Claude Code", "status": "running", "demo": True},
-        )
-        self._engine.pool_add(ws)
-
-        for terminal_id in self._engine.list_terminals():
-            self._engine.pool_activate("claude-code-demo", terminal_id, 0)
-            log.debug("Demo widget activated at key 0 on terminal %s", terminal_id)
-
-        log.info("Demo widget ready on %d terminal(s)", len(self._engine.list_terminals()))
 
     async def _start_connectors(self) -> None:
         """Start process scanner and file watcher."""
@@ -813,7 +776,6 @@ async def run_supervisor(
     render: str = "sim",
     device_index: int = 0,
     autodetect: bool = True,
-    demo: bool = False,
     expose: bool = False,
     no_physical: bool = False,
 ) -> None:
@@ -827,7 +789,6 @@ async def run_supervisor(
         render=render,
         device_index=device_index,
         autodetect=autodetect,
-        demo=demo,
         expose=expose,
         no_physical=no_physical,
     )

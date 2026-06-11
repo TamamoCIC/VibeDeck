@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ================================================================
 #  VibeDeck Launcher — Linux / macOS
-#  Usage: ./vibe-deck serve --expose --demo
+#  Usage: ./vibe-deck serve --expose --no-physical
 # ================================================================
 set -euo pipefail
 

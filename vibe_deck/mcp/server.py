@@ -25,16 +25,11 @@ from typing import Any
 log = logging.getLogger("vibe_deck.mcp.server")
 
 
-def _get_mock_state() -> dict[str, Any]:
-    """Return mock state when daemon is not running."""
-    return {
-        "version": "0.1.0",
-        "agents": [
-            {"id": "claude-code-demo", "type": "agent", "icon": "🐙", "label": "Demo", "status": "running"},
-            {"id": "opencode-demo", "type": "agent", "icon": "🦊", "label": "Demo", "status": "idle"},
-        ],
-        "deck": {"type": "Stream Deck XL", "rows": 4, "cols": 8, "key_count": 32, "connected": False},
-    }
+_EMPTY_STATE: dict[str, Any] = {
+    "version": "0.1.0",
+    "agents": [],
+    "deck": {"type": "unknown", "rows": 0, "cols": 0, "key_count": 0, "connected": False},
+}
 
 
 async def run_mcp_server() -> None:
@@ -114,7 +109,7 @@ async def _run_mcp_sdk(Server, stdio_server) -> None:
 
     @server.call_tool()
     async def call_tool(name: str, arguments: dict) -> list:
-        state = _get_mock_state()
+        state = _EMPTY_STATE
 
         if name == "vibedeck.list_agents":
             return [{"type": "text", "text": json.dumps(state["agents"], indent=2)}]
@@ -132,7 +127,7 @@ async def _run_mcp_sdk(Server, stdio_server) -> None:
 
     @server.read_resource()
     async def read_resource(uri: str) -> str:
-        state = _get_mock_state()
+        state = _EMPTY_STATE
         if uri == "vibedeck://layout/current":
             return json.dumps({
                 "deck_type": state["deck"]["type"],
@@ -156,7 +151,7 @@ async def _run_mcp_fallback() -> None:
     Implements the MCP basic lifecycle (initialize, tools/list,
     tools/call, resources/list, resources/read) without the SDK.
     """
-    state = _get_mock_state()
+    state = _EMPTY_STATE
 
     # Read initialize request
     init_line = sys.stdin.readline()

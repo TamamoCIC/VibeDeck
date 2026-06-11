@@ -51,7 +51,7 @@ Merge the generated hooks.json into `~/.claude/settings.json`:
 ### 4. Start the daemon
 
 ```bash
-vibe-deck serve --demo --no-physical --port 9734
+vibe-deck serve --no-physical --port 9734
 ```
 
 ### 5. Connect
@@ -164,7 +164,7 @@ re-register via the wizard.
 ### Daemon debug logging
 
 ```bash
-vibe-deck serve --demo --no-physical --debug
+vibe-deck serve --no-physical --debug
 ```
 
 Logs show `[WATCHER]`, `[HOOK→UI]`, and `[THINKING]` messages for tracing
