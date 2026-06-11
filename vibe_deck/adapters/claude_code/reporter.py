@@ -247,6 +247,27 @@ def _output_file(event: dict | None = None) -> Path:
     return agents_dir / f"claude-code-{os.getppid()}.jsonl"
 
 
+def _get_console_hwnd() -> int | None:
+    """Return the HWND of the console window attached to this process.
+
+    On Windows, uses ``GetConsoleWindow()`` which returns the HWND of
+    the console associated with the calling process.  For ConPTY-based
+    terminals (Windows Terminal), this returns the hidden conhost window
+    — not the visible WT window.  VibeDeck will use this as a hint and
+    walk up to the visible parent if needed.
+
+    Returns ``None`` on non-Windows or if no console is attached.
+    """
+    if sys.platform != 'win32':
+        return None
+    try:
+        import ctypes as _ctypes
+        hwnd = _ctypes.windll.kernel32.GetConsoleWindow()
+        return int(hwnd) if hwnd else None
+    except Exception:
+        return None
+
+
 def main() -> None:
     """Read hook event from stdin, append to JSONL, exit cleanly."""
     try:
@@ -261,6 +282,12 @@ def main() -> None:
     # Annotate with receipt metadata
     event["_vibedeck_ts"] = datetime.now(timezone.utc).isoformat()
     event["_vibedeck_source"] = "claude-code-hook"
+
+    # Report console window handle for reliable window focus switching.
+    # VibeDeck can use this to map PID → HWND without guessing.
+    console_hwnd = _get_console_hwnd()
+    if console_hwnd:
+        event["_console_hwnd"] = console_hwnd
 
     # Minimal stderr log so users can confirm hooks are firing
     hook_event = event.get("hook_event_name", "?")

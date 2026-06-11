@@ -4,15 +4,22 @@ Window focus utilities — find and focus an agent's window by PID.
 Uses Windows API via ctypes to enumerate top-level windows, match by
 process ID, and bring the target window to the foreground.
 
-Foreground activation is achieved via the "Alt-spoofing" technique:
-inject a synthetic Left-Alt key-down event with ``SendInput`` (scan
-code, not virtual-key code), which temporarily grants the calling
-thread foreground-activation rights so ``SetForegroundWindow`` can
-succeed from a background daemon process.
+Window discovery uses a **terminal window class whitelist** to avoid
+matching helper/tool windows.  Known terminal classes:
+  - CASCADIA_HOSTING_WINDOW_CLASS  (Windows Terminal)
+  - ConsoleWindowClass             (classic conhost)
+  - mintty                         (Git Bash / MSYS2)
+  - VirtualConsoleClass            (ConEmu / Cmder)
 
-Because AI agents (Claude Code, etc.) run inside a terminal, we walk
-the process tree upward to find the ancestor that actually owns the
-visible window.
+An **HWND cache** (pid → hwnd) provides instant lookups after the first
+discovery.  Agents can self-report their console HWND via the hook
+system for even more reliable binding.
+
+Foreground activation cascades through multiple strategies:
+  1. Alt-spoofing (SendInput + SetForegroundWindow)
+  2. AttachThreadInput + BringWindowToTop + SetForegroundWindow
+  3. Retry after 400 ms foreground-lock cooldown
+  4. Flash taskbar (last resort)
 
 On non-Windows platforms this is a graceful no-op.
 """
@@ -39,16 +46,17 @@ if _IS_WINDOWS:
 _MAX_ANCESTOR_WALK = 6  # max levels to walk up the process tree
 
 if _IS_WINDOWS:
-    # Ensure this thread has a Windows message queue.  Some window-
-    # management APIs (including SendInput) require it.
-    _user32.PeekMessageW(None, 0, 0, 0, 0x0001)  # PM_NOREMOVE
-
     # ── ctypes structures for SendInput (Alt-spoofing) ──────────
     INPUT_KEYBOARD = 1
     KEYEVENTF_SCANCODE = 0x0008
     KEYEVENTF_KEYUP = 0x0002
     LEFT_ALT_SCANCODE = 0x0038  # documented Left Alt scan code
     SW_RESTORE = 9
+
+    # GetWindowLong extended style constants
+    GWL_EXSTYLE = -20
+    WS_EX_TOOLWINDOW = 0x00000080
+    WS_EX_NOACTIVATE = 0x08000000
 
     class KEYBDINPUT(ctypes.Structure):
         _fields_ = [
@@ -88,6 +96,43 @@ if _IS_WINDOWS:
     _user32.SendInput.restype = wintypes.UINT
     _SENDINPUT_SIZEOF = ctypes.sizeof(INPUT)
 
+    # GetWindowLongW — read extended window styles
+    _user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+    _user32.GetWindowLongW.restype = ctypes.c_long
+
+    # GetClassName
+    _user32.GetClassNameW.argtypes = [wintypes.HWND,
+                                      ctypes.c_wchar_p,
+                                      ctypes.c_int]
+    _user32.GetClassNameW.restype = ctypes.c_int
+
+    # AttachThreadInput
+    _user32.AttachThreadInput.argtypes = [wintypes.DWORD,
+                                          wintypes.DWORD,
+                                          wintypes.BOOL]
+    _user32.AttachThreadInput.restype = wintypes.BOOL
+
+    # BringWindowToTop
+    _user32.BringWindowToTop.argtypes = [wintypes.HWND]
+    _user32.BringWindowToTop.restype = wintypes.BOOL
+
+    # GetWindowThreadProcessId — return thread id and write process id
+    _user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND,
+                                                  ctypes.POINTER(wintypes.DWORD)]
+    _user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+
+    # GetWindowRect — check window size
+    class RECT(ctypes.Structure):
+        _fields_ = [
+            ("left", ctypes.c_long),
+            ("top", ctypes.c_long),
+            ("right", ctypes.c_long),
+            ("bottom", ctypes.c_long),
+        ]
+
+    _user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(RECT)]
+    _user32.GetWindowRect.restype = wintypes.BOOL
+
     # ── FLASHWINFO for taskbar flashing ─────────────────
     class FLASHWINFO(ctypes.Structure):
         _fields_ = [
@@ -99,6 +144,97 @@ if _IS_WINDOWS:
         ]
     FLASHW_TRAY = 0x00000002
     FLASHW_TIMERNOFG = 0x0000000C  # flash until foreground
+
+
+# ── Terminal window class whitelist ──────────────────
+# Only windows with these class names are considered real terminal
+# windows.  This prevents matching helper/tool windows like
+# "✳ alt-spoof-focus" that happen to belong to an ancestor PID.
+_TERMINAL_CLASSES: set[str] = {
+    "CASCADIA_HOSTING_WINDOW_CLASS",  # Windows Terminal
+    "ConsoleWindowClass",             # classic conhost
+    "mintty",                         # Git Bash / MSYS2
+    "VirtualConsoleClass",            # ConEmu / Cmder
+}
+
+# Allow users to extend via environment variable (semicolon-separated)
+import os as _os
+_extra = _os.environ.get("VIBEDECK_TERMINAL_CLASSES", "")
+if _extra:
+    _TERMINAL_CLASSES.update(c.strip() for c in _extra.split(";") if c.strip())
+
+
+# ── HWND cache (pid → hwnd) ─────────────────────────
+# Populated by:
+#   1. register_hwnd()  — called when agent self-reports via hook data
+#   2. _find_window()   — called on first discovery
+# Entries are validated with IsWindow() before use.
+_hwnd_cache: dict[int, int] = {}
+
+
+def register_hwnd(pid: int, hwnd: int) -> None:
+    """Register a known window handle for a PID.
+
+    Called when an agent self-reports its console HWND through the
+    hook system (e.g. ``_console_hwnd`` field in hook data).
+
+    On ConPTY-based terminals (Windows Terminal), ``GetConsoleWindow()``
+    returns the hidden conhost window.  We resolve it to the visible
+    Windows Terminal window by walking the process tree from conhost's
+    PID to its parent (WindowsTerminal.exe).
+    """
+    if not (pid > 0 and hwnd > 0 and _IS_WINDOWS):
+        return
+
+    # Check if the reported HWND is a visible terminal window
+    if _user32.IsWindowVisible(hwnd):
+        cls = _get_window_class(hwnd)
+        if cls in _TERMINAL_CLASSES:
+            _hwnd_cache[pid] = hwnd
+            log.info("register_hwnd: pid=%d → hwnd=%d (class=%r, direct)", pid, hwnd, cls)
+            return
+
+    # The HWND is hidden (ConPTY conhost).  Find the visible WT window
+    # by getting the conhost PID and looking for its parent's window.
+    conhost_pid = wintypes.DWORD()
+    _user32.GetWindowThreadProcessId(hwnd, ctypes.byref(conhost_pid))
+    if conhost_pid.value > 0:
+        import psutil
+        try:
+            parent_pid = psutil.Process(conhost_pid.value).ppid()
+            if parent_pid and parent_pid > 0:
+                # Search for the parent's window (likely Windows Terminal)
+                parent_chain = _ancestor_pids(parent_pid)
+                visible_hwnd = _find_window(parent_chain)
+                if visible_hwnd:
+                    _hwnd_cache[pid] = visible_hwnd
+                    log.info("register_hwnd: pid=%d → hwnd=%d (resolved from conhost pid=%d)",
+                             pid, visible_hwnd, conhost_pid.value)
+                    return
+        except Exception:
+            pass
+
+    # Fallback: cache the original HWND anyway — better than nothing
+    _hwnd_cache[pid] = hwnd
+    log.info("register_hwnd: pid=%d → hwnd=%d (fallback, may be hidden)", pid, hwnd)
+
+
+def clear_hwnd_cache(pid: int | None = None) -> None:
+    """Clear cached HWND entries.  If *pid* is None, clear all."""
+    if pid is None:
+        _hwnd_cache.clear()
+    else:
+        _hwnd_cache.pop(pid, None)
+
+
+def _get_cached_hwnd(pid: int) -> int | None:
+    """Return cached HWND for *pid* if it still exists, else None."""
+    hwnd = _hwnd_cache.get(pid)
+    if hwnd and _IS_WINDOWS and _user32.IsWindow(hwnd):
+        return hwnd
+    if hwnd:
+        _hwnd_cache.pop(pid, None)
+    return None
 
 
 def _ancestor_pids(pid: int) -> list[int]:
@@ -118,42 +254,85 @@ def _ancestor_pids(pid: int) -> list[int]:
     return chain
 
 
-def _find_window(pids: list[int]) -> int | None:
-    """Return the first visible, titled window handle belonging to any
-    PID in *pids* (searched in order — deepest descendant first so the
-    most specific match wins).
+def _get_window_class(hwnd: int) -> str:
+    """Return the window class name of *hwnd*."""
+    buf = ctypes.create_unicode_buffer(256)
+    _user32.GetClassNameW(hwnd, buf, 255)
+    return buf.value
 
-    Windows whose title is exactly ``"VibeDeck"`` (the daemon's own
-    terminal) are excluded — VibeDeck and the agent are sibling
-    processes under the same terminal, so the terminal window title
-    can be inherited from VibeDeck's tab.
+
+def _is_tool_window(hwnd: int) -> bool:
+    """Return True if *hwnd* has WS_EX_TOOLWINDOW or WS_EX_NOACTIVATE."""
+    ex_style = _user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+    return bool(ex_style & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE))
+
+
+def _has_meaningful_size(hwnd: int) -> bool:
+    """Return True if *hwnd* has a non-zero client area."""
+    rect = RECT()
+    if not _user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+        return False
+    width = rect.right - rect.left
+    height = rect.bottom - rect.top
+    return width > 10 and height > 10
+
+
+def _find_window(pids: list[int]) -> int | None:
+    """Return the best terminal window handle belonging to any PID in
+    *pids* (searched in order — deepest descendant first).
+
+    Only windows matching the terminal class whitelist are considered.
+    Tool windows, zero-size windows, and non-activatable windows are
+    excluded.
     """
     pids_set = set(pids)
-    found: list[tuple[int, int]] = []  # (pid_index_in_chain, hwnd)
+    found: list[tuple[int, int, str]] = []  # (pid_index, hwnd, class_name)
 
     def _enum_proc(hwnd: int, _lparam: int) -> bool:
         process_id = wintypes.DWORD()
         _user32.GetWindowThreadProcessId(hwnd, ctypes.byref(process_id))
         pid = process_id.value
-        if pid in pids_set and _user32.IsWindowVisible(hwnd):
-            title_len = _user32.GetWindowTextLengthW(hwnd)
-            if title_len > 0:
-                buf = ctypes.create_unicode_buffer(256)
-                _user32.GetWindowTextW(hwnd, buf, 255)
-                title = buf.value
-                # Skip VibeDeck's own terminal window
-                if title.strip().lower() == "vibedeck":
-                    return True  # keep enumerating
-                idx = pids.index(pid) if pid in pids else 999
-                found.append((idx, hwnd))
+        if pid not in pids_set:
+            return True
+        if not _user32.IsWindowVisible(hwnd):
+            return True
+
+        # ── Window class filter ──────────────────────
+        cls_name = _get_window_class(hwnd)
+        if cls_name not in _TERMINAL_CLASSES:
+            return True  # not a terminal window — skip
+
+        # ── Extended style filter ────────────────────
+        if _is_tool_window(hwnd):
+            return True  # tool/helper window — skip
+
+        # ── Size filter ──────────────────────────────
+        if not _has_meaningful_size(hwnd):
+            return True  # zero-size placeholder — skip
+
+        # ── Title check (skip VibeDeck's own terminal) ─
+        title_len = _user32.GetWindowTextLengthW(hwnd)
+        if title_len > 0:
+            buf = ctypes.create_unicode_buffer(256)
+            _user32.GetWindowTextW(hwnd, buf, 255)
+            title = buf.value
+            if title.strip().lower() == "vibedeck":
+                return True  # VibeDeck's own terminal
+
+        idx = pids.index(pid) if pid in pids else 999
+        found.append((idx, hwnd, cls_name))
         return True
 
     _user32.EnumWindows(_WNDENUMPROC(_enum_proc), 0)
 
-    # Prefer the deepest descendant (lowest index in chain → agent PID
-    # itself if it has a window, then parent, etc.)
+    # Prefer the deepest descendant (lowest index in chain)
     found.sort(key=lambda x: x[0])
-    return found[0][1] if found else None
+    if found:
+        _, hwnd, cls = found[0]
+        log.info("_find_window: matched hwnd=%d class=%r (candidates=%d)",
+                 hwnd, cls, len(found))
+        return hwnd
+    return None
 
 
 def _is_window_minimized(hwnd: int) -> bool:
@@ -161,8 +340,18 @@ def _is_window_minimized(hwnd: int) -> bool:
     return bool(_user32.IsIconic(hwnd))
 
 
+def _ensure_message_queue() -> None:
+    """Ensure the calling thread has a Windows message queue.
+
+    SendInput and other window-management APIs require one.
+    PeekMessageW is the cheapest way to create it.
+    """
+    _user32.PeekMessageW(None, 0, 0, 0, 0x0001)  # PM_NOREMOVE
+
+
 def _try_alt_spoof(hwnd: int) -> bool:
     """Single shot of Alt-spoofing.  Returns True if focus succeeded."""
+    _ensure_message_queue()
     sent_down = _user32.SendInput(1, ctypes.byref(_ALT_DOWN), _SENDINPUT_SIZEOF)
     _kernel32.Sleep(1)
     try:
@@ -174,46 +363,77 @@ def _try_alt_spoof(hwnd: int) -> bool:
     return bool(result)
 
 
+def _try_attach_thread(hwnd: int) -> bool:
+    """Try to activate *hwnd* via AttachThreadInput.
+
+    Attaches the calling thread to the foreground window's thread,
+    which grants temporary foreground-activation rights.
+    """
+    fg_hwnd = _user32.GetForegroundWindow()
+    if not fg_hwnd or fg_hwnd == hwnd:
+        return False  # no foreground window or already focused
+
+    fg_tid = _user32.GetWindowThreadProcessId(fg_hwnd, None)
+    my_tid = _kernel32.GetCurrentThreadId()
+    if fg_tid == my_tid:
+        # Same thread — just call SetForegroundWindow directly
+        return bool(_user32.SetForegroundWindow(hwnd))
+
+    attached = _user32.AttachThreadInput(my_tid, fg_tid, True)
+    if not attached:
+        log.debug("_try_attach_thread: AttachThreadInput failed (tid=%d→%d)",
+                  my_tid, fg_tid)
+        return False
+    try:
+        _user32.BringWindowToTop(hwnd)
+        _user32.ShowWindow(hwnd, SW_RESTORE)
+        result = _user32.SetForegroundWindow(hwnd)
+        return bool(result)
+    finally:
+        _user32.AttachThreadInput(my_tid, fg_tid, False)
+
+
 def _bring_to_foreground(hwnd: int) -> bool:
     """Bring *hwnd* to the foreground with retry and graceful degradation.
 
     Strategy cascade:
       1. Alt-spoofing (instant — normal operation).
-      2. Wait 400 ms, retry Alt-spoofing (post-unlock — foreground lock
+      2. AttachThreadInput + BringWindowToTop (thread-level focus steal).
+      3. Wait 400 ms, retry Alt-spoofing (post-unlock — foreground lock
          is briefly absent after a session unlock).
-      3. Flash taskbar + SwitchToThisWindow (persistent UIPI block).
+      4. Flash taskbar + SwitchToThisWindow (persistent UIPI block).
     """
     title = _window_title(hwnd)
+
+    # Restore minimized windows first
+    if _is_window_minimized(hwnd):
+        _user32.ShowWindow(hwnd, SW_RESTORE)
 
     # ── Strategy 1: Alt-spoofing ─────────────────────
     if _try_alt_spoof(hwnd):
         log.info("_bring_to_foreground [alt-spoof-1] hwnd=%s title=%r ✓", hwnd, title)
-        if _is_window_minimized(hwnd):
-            _user32.ShowWindow(hwnd, SW_RESTORE)
         return True
 
     log.info("_bring_to_foreground [alt-spoof-1] hwnd=%s title=%r ✗ — will retry", hwnd, title)
 
-    # ── Strategy 2: Retry after foreground-lock reset ─
-    # After a session unlock, the foreground lock timer restarts.
-    # Waiting ~400 ms gives it time to expire, after which even a
-    # plain SetForegroundWindow (without Alt-spoofing) can succeed.
+    # ── Strategy 2: AttachThreadInput ────────────────
+    if _try_attach_thread(hwnd):
+        log.info("_bring_to_foreground [attach-thread] hwnd=%s ✓", hwnd)
+        return True
+
+    log.debug("_bring_to_foreground [attach-thread] hwnd=%s ✗", hwnd)
+
+    # ── Strategy 3: Retry after foreground-lock reset ─
     _kernel32.Sleep(400)
     if _try_alt_spoof(hwnd):
         log.info("_bring_to_foreground [alt-spoof-2] hwnd=%s ✓", hwnd)
-        if _is_window_minimized(hwnd):
-            _user32.ShowWindow(hwnd, SW_RESTORE)
         return True
     # Also try bare SetForegroundWindow — post-unlock it might just work
     if _user32.SetForegroundWindow(hwnd):
         log.info("_bring_to_foreground [bare-sfw] hwnd=%s ✓", hwnd)
-        if _is_window_minimized(hwnd):
-            _user32.ShowWindow(hwnd, SW_RESTORE)
         return True
 
-    # ── Strategy 3: Flash + SwitchToThisWindow ────────
-    # Can't steal focus (persistent UIPI block).  Flash the taskbar
-    # so the user sees which window to switch to.
+    # ── Strategy 4: Flash + SwitchToThisWindow ────────
     fw = FLASHWINFO()
     fw.cbSize = ctypes.sizeof(FLASHWINFO)
     fw.hwnd = hwnd
@@ -265,7 +485,15 @@ def focus_window_by_pid(pid: int) -> bool:
     chain = _ancestor_pids(pid)
     log.debug("focus: pid chain for %d → %s", pid, chain)
 
-    hwnd = _find_window(chain)
+    # Try cached HWND first
+    hwnd = _get_cached_hwnd(pid)
+    if hwnd:
+        log.info("focus: using cached hwnd=%d for pid=%d", hwnd, pid)
+    else:
+        hwnd = _find_window(chain)
+        if hwnd:
+            _hwnd_cache[pid] = hwnd
+
     if hwnd is None:
         return False
 
@@ -300,30 +528,30 @@ def toggle_window_by_pid(pid: int) -> dict:
     chain = _ancestor_pids(pid)
     log.info("Toggle: pid=%d full_chain=%s", pid, chain)
 
-    # ── Strip VibeDeck's own ancestry ──────────────────
-    # If the agent was launched from the same terminal as VibeDeck,
-    # the ancestor chain will include VibeDeck's PID and its parents.
-    # Searching those would match VibeDeck's own terminal window.
-    # We only care about PIDs *below* VibeDeck in the tree.
-    import os as _os
-    _own_pid = _os.getpid()
-    _cut = len(chain)
-    for _i, _p in enumerate(chain):
-        if _p == _own_pid:
-            _cut = _i  # stop before VibeDeck's own PID
-            break
-    search_chain = chain[:_cut] if _cut < len(chain) else chain
-    if len(search_chain) < len(chain):
-        log.info("Toggle: stripped VibeDeck ancestry — search_chain=%s", search_chain)
+    # ── Try cached HWND first ─────────────────────
+    agent_hwnd = _get_cached_hwnd(pid)
+    if agent_hwnd:
+        log.info("Toggle: using cached hwnd=%d for pid=%d", agent_hwnd, pid)
+    else:
+        # ── Strip VibeDeck's own ancestry ──────────────────
+        import os as _os
+        _own_pid = _os.getpid()
+        _cut = len(chain)
+        for _i, _p in enumerate(chain):
+            if _p == _own_pid:
+                _cut = _i  # stop before VibeDeck's own PID
+                break
+        search_chain = chain[:_cut] if _cut < len(chain) else chain
+        if len(search_chain) < len(chain):
+            log.info("Toggle: stripped VibeDeck ancestry — search_chain=%s", search_chain)
 
-    agent_hwnd = _find_window(search_chain)
+        agent_hwnd = _find_window(search_chain)
+        if agent_hwnd:
+            _hwnd_cache[pid] = agent_hwnd
+            log.info("Toggle: cached new hwnd=%d for pid=%d", agent_hwnd, pid)
 
     if agent_hwnd is None:
-        # If the stripped chain is empty, the agent IS VibeDeck (or a child
-        # with no terminal window of its own).
-        if not search_chain:
-            return {"action": "error", "message": f"PID {pid} is VibeDeck or a direct child with no window"}
-        return {"action": "error", "message": f"PID {pid} has no visible windows"}
+        return {"action": "error", "message": f"PID {pid} has no visible terminal windows"}
 
     agent_title = _window_title(agent_hwnd)
 
@@ -373,5 +601,28 @@ def find_window_title(pid: int) -> str | None:
         return None
 
     chain = _ancestor_pids(pid)
-    hwnd = _find_window(chain)
+    hwnd = _get_cached_hwnd(pid) or _find_window(chain)
     return _window_title(hwnd) if hwnd is not None else None
+
+
+def find_and_cache_hwnd(pid: int) -> int | None:
+    """Find the terminal window for *pid* and cache the result.
+
+    Called by ProcessScanner at agent discovery time (early binding).
+    Returns the HWND if found, else None.
+    """
+    if not _IS_WINDOWS or pid <= 0:
+        return None
+
+    # Check cache first
+    cached = _get_cached_hwnd(pid)
+    if cached:
+        return cached
+
+    chain = _ancestor_pids(pid)
+    hwnd = _find_window(chain)
+    if hwnd:
+        _hwnd_cache[pid] = hwnd
+        log.info("find_and_cache_hwnd: pid=%d → hwnd=%d (title=%r, class=%r)",
+                 pid, hwnd, _window_title(hwnd), _get_window_class(hwnd))
+    return hwnd

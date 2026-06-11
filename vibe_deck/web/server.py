@@ -773,7 +773,9 @@ class VibeDeckWebServer:
             )
 
         from ..core.window_focus import toggle_window_by_pid
-        result = toggle_window_by_pid(pid)
+        import asyncio
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, toggle_window_by_pid, pid)
         log.info("[API] focus toggle: pid=%d → %s", pid, result.get("action"))
 
         if result.get("action") == "error":

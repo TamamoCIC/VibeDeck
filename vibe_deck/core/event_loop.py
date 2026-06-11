@@ -393,6 +393,18 @@ class VibeDeckSupervisor:
             log.info("[HOOK→UI] agent=%s widget=%s hook_event=%s tool=%s status=%s",
                      agent_name, widget_id, _hook_event, _tool_name, _status)
 
+            # ── Register console HWND from agent self-reporting ──
+            # The reporter attaches _console_hwnd (from GetConsoleWindow)
+            # so we can reliably map PID → terminal window.
+            _console_hwnd = data.get("_console_hwnd")
+            if _console_hwnd:
+                import re as _re_hwnd
+                _pid_match = _re_hwnd.search(r"-(\d+)$", widget_id)
+                if _pid_match:
+                    _agent_pid = int(_pid_match.group(1))
+                    from .window_focus import register_hwnd
+                    register_hwnd(_agent_pid, int(_console_hwnd))
+
             # Use display from adapter if provided, else resolve from event data
             display_raw = msg.payload.get("display")
             if display_raw:

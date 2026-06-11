@@ -107,6 +107,15 @@ class ProcessScanner(BaseConnector):
                     "pid": pid,
                     "widget_id": f"{name}-{pid}",
                 })
+                # Early HWND binding — try to find the terminal window
+                # now so the focus button works from the first click.
+                try:
+                    from ..core.window_focus import find_and_cache_hwnd
+                    hwnd = find_and_cache_hwnd(pid)
+                    if hwnd:
+                        log.info("Agent %s (pid=%d): early HWND binding → %d", name, pid, hwnd)
+                except Exception:
+                    log.debug("Early HWND binding failed for pid=%d", pid, exc_info=True)
 
         # Detect gone agents
         for pid in list(self._known):
@@ -118,5 +127,12 @@ class ProcessScanner(BaseConnector):
                     "pid": pid,
                     "widget_id": f"{gone_name}-{pid}",
                 })
+                # Clean up window focus state for the gone agent
+                try:
+                    from ..core.window_focus import clear_hwnd_cache, clear_toggle_state
+                    clear_hwnd_cache(pid)
+                    clear_toggle_state(pid)
+                except Exception:
+                    pass
 
         self._known = current
