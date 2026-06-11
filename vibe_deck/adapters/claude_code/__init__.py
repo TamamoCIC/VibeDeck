@@ -28,19 +28,19 @@ APPEARANCE_CONFIG_PATH = Path.home() / ".vibe-deck" / "adapters" / "claude-code.
 # ── Built-in fallback defaults ──────────────────────
 
 _BUILTIN_STATUS_TO_DISPLAY: dict[str, dict[str, str]] = {
-    "SessionStart":     {"icon": "🐙", "color": "#22c55e", "animation": "crawl",  "label": "Running"},
+    "SessionStart":     {"icon": "🐙", "color": "#22c55e", "animation": "crawl",  "label": "Running", "sprite": "test_bounce"},
     "Stop":             {"icon": "🐙", "color": "#475569", "animation": "none",   "label": "Idle"},
-    "UserPromptSubmit": {"icon": "🐙", "color": "#eab308", "animation": "blink",  "label": "Waiting", "min_display_ms": "600"},
-    "PreToolUse":       {"icon": "🐙", "color": "#22c55e", "animation": "crawl",  "label": "Tool",    "min_display_ms": "800"},
-    "PostToolUse":      {"icon": "🐙", "color": "#22c55e", "animation": "crawl",  "label": "Running", "min_display_ms": "800"},
-    "PreCompact":       {"icon": "🐙", "color": "#6366f1", "animation": "pulse",  "label": "Compact"},
+    "UserPromptSubmit": {"icon": "🐙", "color": "#eab308", "animation": "blink",  "label": "Waiting", "min_display_ms": "600", "sprite": "test_bounce"},
+    "PreToolUse":       {"icon": "🐙", "color": "#22c55e", "animation": "crawl",  "label": "Tool",    "min_display_ms": "800", "sprite": "test_bounce"},
+    "PostToolUse":      {"icon": "🐙", "color": "#22c55e", "animation": "crawl",  "label": "Running", "min_display_ms": "800", "sprite": "test_bounce"},
+    "PreCompact":       {"icon": "🐙", "color": "#6366f1", "animation": "pulse",  "label": "Compact", "sprite": "test_bounce"},
     "SubagentStop":     {"icon": "🐙", "color": "#475569", "animation": "none",   "label": "Sub done"},
     "SessionEnd":       {"icon": "⚫", "color": "#374151", "animation": "none",   "label": "Offline"},
-    "running":          {"icon": "🐙", "color": "#22c55e", "animation": "crawl",  "label": "Running"},
+    "running":          {"icon": "🐙", "color": "#22c55e", "animation": "crawl",  "label": "Running", "sprite": "test_bounce"},
     "idle":             {"icon": "🐙", "color": "#166534", "animation": "none",   "label": "Idle"},
-    "waiting_for_user": {"icon": "🐙", "color": "#eab308", "animation": "blink",  "label": "Waiting"},
-    "thinking":         {"icon": "🐙", "color": "#7c3aed", "animation": "pulse",  "label": "Thinking"},
-    "writing":          {"icon": "🐙", "color": "#3b82f6", "animation": "pulse",  "label": "Writing"},
+    "waiting_for_user": {"icon": "🐙", "color": "#eab308", "animation": "blink",  "label": "Waiting", "sprite": "test_bounce"},
+    "thinking":         {"icon": "🐙", "color": "#7c3aed", "animation": "pulse",  "label": "Thinking", "sprite": "test_bounce"},
+    "writing":          {"icon": "🐙", "color": "#3b82f6", "animation": "pulse",  "label": "Writing", "sprite": "test_bounce"},
     "error":            {"icon": "🔴", "color": "#ef4444", "animation": "blink",  "label": "Error"},
     "offline":          {"icon": "⚫", "color": "#374151", "animation": "none",   "label": "Offline"},
 }

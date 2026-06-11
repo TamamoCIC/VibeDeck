@@ -59,6 +59,7 @@ class DisplayState(BaseModel):
     animation: AnimationType = Field(default=AnimationType.NONE, description="Key animation style")
     label: str = Field(default="", max_length=12, description="Short text overlay on the key")
     badge: Optional[str] = Field(default=None, description="Badge text (number or icon) in corner")
+    sprite: str = Field(default="none", description="Sprite clip name for pixel-art animation (none = disabled)")
 
     model_config = {"json_schema_extra": {
         "examples": [{
@@ -67,6 +68,7 @@ class DisplayState(BaseModel):
             "animation": "crawl",
             "label": "Running",
             "badge": None,
+            "sprite": "mascot_walk",
         }]
     }}
 

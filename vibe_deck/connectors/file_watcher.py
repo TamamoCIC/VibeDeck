@@ -219,7 +219,14 @@ class FileWatcher(BaseConnector):
             new_bytes = await asyncio.to_thread(
                 _read_range, path, last_offset, file_size - last_offset
             )
-            new_text = new_bytes.decode("utf-8")
+            try:
+                new_text = new_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                # File may contain mixed encodings or binary artifacts.
+                # Fall back to UTF-8 with replacement characters so we
+                # can still parse any valid JSON lines.
+                new_text = new_bytes.decode("utf-8", errors="replace")
+                log.debug("Non-UTF-8 bytes in %s — using replacement chars", path.name)
             new_lines = [ln for ln in new_text.split("\n") if ln]
 
             if not new_lines:

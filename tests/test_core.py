@@ -26,6 +26,7 @@ class TestDisplayState:
         assert ds.animation == AnimationType.NONE
         assert ds.label == ""
         assert ds.badge is None
+        assert ds.sprite == "none"
 
     def test_custom(self):
         ds = DisplayState(
@@ -36,6 +37,20 @@ class TestDisplayState:
         assert ds.animation == AnimationType.CRAWL
         assert ds.label == "Running"
         assert ds.badge == "3"
+        assert ds.sprite == "none"  # default
+
+    def test_sprite_field(self):
+        """Sprite field carries the clip name for pixel-art animations."""
+        ds = DisplayState(
+            icon="🐙", color="#22c55e", animation="crawl",
+            label="Running", sprite="test_bounce",
+        )
+        assert ds.sprite == "test_bounce"
+        # JSON roundtrip preserves sprite
+        data = ds.model_dump()
+        assert data["sprite"] == "test_bounce"
+        ds2 = DisplayState(**data)
+        assert ds2.sprite == "test_bounce"
 
     def test_invalid_color(self):
         """Color must be hex format."""

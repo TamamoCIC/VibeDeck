@@ -1,0 +1,19 @@
+frames:
+- file: frame_000.png
+  hold_ms: 120
+- file: frame_001.png
+  hold_ms: 100
+- file: frame_002.png
+  hold_ms: 150
+- file: frame_003.png
+  hold_ms: 100
+- file: frame_004.png
+  hold_ms: 150
+- file: frame_005.png
+  hold_ms: 100
+- file: frame_006.png
+  hold_ms: 100
+- file: frame_007.png
+  hold_ms: 200
+loop: true
+name: test_bounce

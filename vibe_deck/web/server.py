@@ -52,6 +52,7 @@ class VibeDeckWebServer:
         expose: bool = False,
         bus=None,
         shutdown_cb=None,
+        animation_engine=None,
     ) -> None:
         self._engine = layout_engine
         self._registry = registry
@@ -59,6 +60,7 @@ class VibeDeckWebServer:
         self._port = port
         self._expose = expose
         self._shutdown_cb = shutdown_cb
+        self._anim_engine = animation_engine
         self._app = web.Application()
         self._runner: web.AppRunner | None = None
         # Per-terminal SSE subscribers: terminal_id → list[StreamResponse]
@@ -86,6 +88,11 @@ class VibeDeckWebServer:
         self._app.router.add_get("/api/pool", self._pool_list)
         self._app.router.add_post("/api/pool/activate", self._pool_activate_handler)
         self._app.router.add_post("/api/pool/deactivate", self._pool_deactivate_handler)
+        # Animation clips
+        self._app.router.add_get("/api/clips", self._list_clips)
+        # Developer debug API
+        self._app.router.add_post("/api/debug/inject-widget", self._debug_inject_widget)
+        self._app.router.add_delete("/api/debug/test-widgets", self._debug_remove_test_widgets)
         # Shutdown
         self._app.router.add_post("/api/shutdown", self._shutdown_handler)
 
@@ -176,7 +183,10 @@ class VibeDeckWebServer:
         """Get or create a SimRenderer for the given grid dimensions."""
         key = f"{rows}x{cols}"
         if key not in self._renderers:
-            self._renderers[key] = SimRenderer(rows, cols, display_name)
+            self._renderers[key] = SimRenderer(
+                rows, cols, display_name,
+                animation_engine=self._anim_engine,
+            )
         return self._renderers[key]
 
     # ── Frame broadcast ────────────────────────────
@@ -685,6 +695,73 @@ class VibeDeckWebServer:
         log.info("Pool widget %r deactivated from terminal %r", widget_id, terminal_id)
         return web.json_response({"status": "ok"})
 
+    # ── Developer Debug API ────────────────────────
+
+    async def _debug_inject_widget(self, request: web.Request) -> web.Response:
+        """Create a test widget in the pool and activate it on a terminal.
+
+        Body: { widget_id?, terminal_id?, key_index?, display: {icon,color,animation,label,sprite} }
+        """
+        try:
+            body = await request.json()
+            display_raw = body.get("display", {})
+            widget_id = body.get("widget_id", "").strip()
+            terminal_id = body.get("terminal_id", "default")
+            key_index = body.get("key_index")
+
+            if not widget_id:
+                import uuid
+                widget_id = f"dev-{uuid.uuid4().hex[:8]}"
+
+            if not display_raw:
+                return web.json_response({"error": "display dict is required"}, status=400)
+
+            from ..core.types import DisplayState, WidgetState, WidgetType
+
+            ds = DisplayState(**display_raw)
+            ws = WidgetState(
+                id=widget_id,
+                type=WidgetType.AGENT,
+                display=ds,
+                meta={"agent": "Developer", "status": "debug", "test_widget": True},
+            )
+            self._engine.pool_add(ws)
+
+            if key_index is None:
+                # Auto-pick first empty key
+                frame = self._engine.get_frame(terminal_id)
+                if frame:
+                    for i, wid in enumerate(frame.keymap):
+                        if not wid:
+                            key_index = i
+                            break
+                if key_index is None:
+                    key_index = 0  # fallback
+
+            self._engine.pool_activate(widget_id, terminal_id, key_index)
+            log.info("Dev widget %r injected on %r at key %d (sprite=%s)",
+                     widget_id, terminal_id, key_index, ds.sprite)
+            return web.json_response({"status": "ok", "widget_id": widget_id, "key_index": key_index})
+        except Exception as exc:
+            log.exception("Failed to inject dev widget")
+            return web.json_response({"error": str(exc)}, status=400)
+
+    async def _debug_remove_test_widgets(self, request: web.Request) -> web.Response:
+        """Remove all test widgets (meta.test_widget == True) from pool and terminals."""
+        removed = []
+        for ws in self._engine.pool_list():
+            wid = ws.id
+            if ws.meta.get("test_widget") is True:
+                # Deactivate from all terminals
+                for tid in self._engine.list_terminals():
+                    self._engine.pool_deactivate(wid, tid)
+                # Remove from pool
+                self._engine.pool_remove(wid)
+                removed.append(wid)
+
+        log.info("Removed %d test widget(s): %s", len(removed), removed)
+        return web.json_response({"status": "ok", "removed": removed})
+
     # ── Shutdown ──────────────────────────────────
 
     async def _shutdown_handler(self, request: web.Request) -> web.Response:
@@ -697,6 +774,14 @@ class VibeDeckWebServer:
 
 
     # ── Daemon Config ──────────────────────────────
+
+    async def _list_clips(self, request: web.Request) -> web.Response:
+        """Return available sprite animation clip names."""
+        if self._anim_engine is None:
+            return web.json_response({"clips": []})
+        return web.json_response({
+            "clips": [{"name": n, "value": n} for n in self._anim_engine.clip_names],
+        })
 
     async def _get_config(self, request: web.Request) -> web.Response:
         """Return the full daemon configuration."""

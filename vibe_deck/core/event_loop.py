@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+from pathlib import Path
 
 from .message_bus import Message, MessageBus, MessageType
 from .layout import LayoutEngine
@@ -118,11 +119,27 @@ class VibeDeckSupervisor:
         # Restore pool from autosave
         self._engine.pool_restore()
 
+        # 0a. Create shared AnimationEngine + load sprite clips
+        from ..render.animation import AnimationEngine
+        from ..render.animation_loader import load_clips
+        from ..render.hardware import KEY_SIZE as HW_KEY_SIZES
+        anim_engine = AnimationEngine()
+        # Load sprite clips from assets if present
+        assets_dir = Path(__file__).parent.parent / "assets"
+        all_key_sizes = [sz for sz in set(HW_KEY_SIZES.values()) if sz[0] > 0 and sz[1] > 0]
+        clips = load_clips(assets_dir, all_key_sizes)
+        for name, clip in clips.items():
+            anim_engine.register_clip(clip)
+        if clips:
+            log.info("Animation engine: %d clip(s) loaded", len(clips))
+        self._anim_engine = anim_engine
+
         # 1. Start Web Server (first so we can show status early)
         from ..web.server import VibeDeckWebServer
         self._web_server = VibeDeckWebServer(
             self._engine, self._registry, port=self._port, expose=self._expose, bus=self._bus,
             shutdown_cb=lambda: self._shutdown_event.set(),
+            animation_engine=anim_engine,
         )
         await self._web_server.start()
 
@@ -188,7 +205,10 @@ class VibeDeckSupervisor:
         ws = WidgetState(
             id="claude-code-demo",
             type=WidgetType.AGENT,
-            display=DisplayState(icon="🐙", color="#22c55e", animation="crawl", label="Running"),
+            display=DisplayState(
+                icon="🐙", color="#22c55e", animation="crawl",
+                label="Running", sprite="test_bounce",
+            ),
             meta={"agent": "Claude Code", "status": "running", "demo": True},
         )
         self._engine.pool_add(ws)
@@ -221,9 +241,14 @@ class VibeDeckSupervisor:
             log.info("Physical terminal disabled (--no-physical)")
             self._render = "sim"
 
+        anim_engine = self._anim_engine  # created during start()
+
         if self._render == "hardware":
             from ..render.hardware import HardwareRenderer
-            self._renderer = HardwareRenderer(device_index=self._device_index)
+            self._renderer = HardwareRenderer(
+                device_index=self._device_index,
+                animation_engine=anim_engine,
+            )
             if self._renderer.open():
                 log.info("Hardware renderer started: %s (%s)", self._renderer.deck_type, self._renderer.grid_name)
                 # Hot-plug monitor
@@ -234,7 +259,7 @@ class VibeDeckSupervisor:
 
         if self._render == "sim":
             from ..render.sim import SimRenderer
-            self._renderer = SimRenderer()
+            self._renderer = SimRenderer(animation_engine=anim_engine)
             log.info("Sim renderer ready")
 
     async def _frame_push_loop(self) -> None:

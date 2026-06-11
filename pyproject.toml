@@ -54,4 +54,8 @@ vibe-deck = "vibe_deck.cli:main"
 include = ["vibe_deck*"]
 
 [tool.setuptools.package-data]
-"vibe_deck" = ["templates/*.yaml"]
+"vibe_deck" = [
+    "templates/*.yaml",
+    "assets/animations/**/*.png",
+    "assets/animations/**/metadata.yaml",
+]

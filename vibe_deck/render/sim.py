@@ -4,16 +4,18 @@ Web Simulator Render Engine — produces PNG frames for the browser.
 Instead of driving real hardware, this renderer generates per-key PNG
 images and serves them via HTTP/SSE to the Web Simulator frontend.
 """
-
 from __future__ import annotations
 
 import io
 import logging
+import time as _time_mod
 from pathlib import Path
+from typing import Optional
 
 from PIL import Image, ImageDraw, ImageFont
 
 from ..core.layout import DisplayState, LayoutFrame, WidgetState
+from ..core.types import AnimationType
 
 log = logging.getLogger("vibe_deck.render.sim")
 
@@ -90,6 +92,14 @@ def _split_text(label: str, max_chars: int = 6) -> list[str]:
     return [label[:mid], label[mid:]]
 
 
+_EFFECT_ANIMATIONS = frozenset({
+    AnimationType.PULSE,
+    AnimationType.BLINK,
+    AnimationType.CRAWL,
+    AnimationType.PROGRESS,
+})
+
+
 class SimRenderer:
     """
     Renders a LayoutFrame into per-key PNG images for the Web Simulator.
@@ -99,14 +109,33 @@ class SimRenderer:
     - Icon/emoji centered
     - Label text overlay at bottom
     - Animation hint encoded in metadata (animated by CSS in browser)
+
+    For sprite animations, the AnimationEngine provides pre-rendered frames
+    that replace the base visual.  Label and badge are composited on top of
+    the sprite frame, then the result is shipped as a PNG via SSE.
     """
 
-    def __init__(self, rows: int = 4, cols: int = 8, display_name: str = "4x8") -> None:
+    def __init__(
+        self,
+        rows: int = 4,
+        cols: int = 8,
+        display_name: str = "4x8",
+        animation_engine: Optional["AnimationEngine"] = None,
+    ) -> None:
         self.display_name = display_name
         self.rows = rows
         self.cols = cols
         grid_key = f"{rows}x{cols}"
         self.key_size = KEY_SIZES.get(grid_key, (72, 72))
+
+        # Lazy import avoids circular dependency at module level
+        if animation_engine is not None:
+            self._anim_engine = animation_engine
+        else:
+            from .animation import AnimationEngine as AE
+            self._anim_engine = AE()
+
+    # ── Static key rendering (effects / no animation) ──
 
     def render_key(self, state: DisplayState, pressed: bool = False) -> bytes:
         """
@@ -153,55 +182,121 @@ class SimRenderer:
 
         # Label at bottom
         if state.label:
-            label_font_size = max(10, min(w // 8, 16))
-            label_font = _default_font(label_font_size)
-            lines = _split_text(state.label)
-            y_offset = h - (len(lines) * (label_font_size + 2)) - 3
-            for line in lines:
-                try:
-                    l_bbox = draw.textbbox((0, 0), line, font=label_font)
-                except Exception:
-                    l_bbox = (0, 0, label_font_size * len(line), label_font_size)
-                l_w = l_bbox[2] - l_bbox[0]
-                l_x = (w - l_w) // 2
-                try:
-                    # Semi-transparent background for readability
-                    draw.rectangle(
-                        [l_x - 2, y_offset, l_x + l_w + 2, y_offset + label_font_size + 2],
-                        fill=(0, 0, 0, 128),
-                    )
-                except Exception:
-                    pass
-                try:
-                    draw.text((l_x, y_offset), line, fill="white", font=label_font)
-                except Exception:
-                    pass
-                y_offset += label_font_size + 2
+            self._draw_label(draw, state.label, w, h)
 
         # Badge in top-right
         if state.badge:
-            badge_text = state.badge
-            badge_size = min(w, h) // 4
-            badge_font = _default_font(badge_size)
-            try:
-                b_bbox = draw.textbbox((0, 0), badge_text, font=badge_font)
-            except Exception:
-                b_bbox = (0, 0, badge_size, badge_size)
-            b_w = b_bbox[2] - b_bbox[0]
-            b_h = b_bbox[3] - b_bbox[1]
-            bx = w - b_w - 4
-            by = 2
-            # Badge pill background
-            draw.ellipse([bx - 4, by - 1, bx + b_w + 4, by + b_h + 3], fill="#EF4444")
-            try:
-                draw.text((bx, by), badge_text, fill="white", font=badge_font)
-            except Exception:
-                pass
+            self._draw_badge(draw, state.badge, w, h)
 
         # Convert to bytes
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         return buf.getvalue()
+
+    # ── Overlay helpers (shared between static and sprite paths) ──
+
+    def _draw_label(self, draw: ImageDraw.Draw, label: str, w: int, h: int) -> None:
+        """Draw label text at the bottom of a key image."""
+        label_font_size = max(10, min(w // 8, 16))
+        label_font = _default_font(label_font_size)
+        lines = _split_text(label)
+        y_offset = h - (len(lines) * (label_font_size + 2)) - 3
+        for line in lines:
+            try:
+                l_bbox = draw.textbbox((0, 0), line, font=label_font)
+            except Exception:
+                l_bbox = (0, 0, label_font_size * len(line), label_font_size)
+            l_w = l_bbox[2] - l_bbox[0]
+            l_x = (w - l_w) // 2
+            try:
+                # Semi-transparent background for readability
+                draw.rectangle(
+                    [l_x - 2, y_offset, l_x + l_w + 2, y_offset + label_font_size + 2],
+                    fill=(0, 0, 0, 128),
+                )
+            except Exception:
+                pass
+            try:
+                draw.text((l_x, y_offset), line, fill="white", font=label_font)
+            except Exception:
+                pass
+            y_offset += label_font_size + 2
+
+    def _draw_badge(self, draw: ImageDraw.Draw, badge_text: str, w: int, h: int) -> None:
+        """Draw a red badge pill in the top-right corner."""
+        badge_size = min(w, h) // 4
+        badge_font = _default_font(badge_size)
+        try:
+            b_bbox = draw.textbbox((0, 0), badge_text, font=badge_font)
+        except Exception:
+            b_bbox = (0, 0, badge_size, badge_size)
+        b_w = b_bbox[2] - b_bbox[0]
+        b_h = b_bbox[3] - b_bbox[1]
+        bx = w - b_w - 4
+        by = 2
+        # Badge pill background
+        draw.ellipse([bx - 4, by - 1, bx + b_w + 4, by + b_h + 3], fill="#EF4444")
+        try:
+            draw.text((bx, by), badge_text, fill="white", font=badge_font)
+        except Exception:
+            pass
+
+    # ── Sprite key rendering ──────────────────────
+
+    def _render_sprite_key(self, ws: WidgetState, sprite_name: str, now: float) -> bytes:
+        """Render a sprite-animated key: engine frame + label + badge overlays.
+
+        Args:
+            ws: The widget state.
+            sprite_name: Name of the sprite clip to play.
+            now: time.monotonic() for frame selection.
+
+        Returns:
+            PNG image bytes.
+        """
+        w, h = self.key_size
+
+        # Get the current sprite frame from the engine (pre-sized + cached)
+        sprite_frame = self._anim_engine.get_sprite_frame(
+            ws.id, sprite_name, now, target_size=(w, h),
+        )
+
+        if sprite_frame is not None:
+            img = sprite_frame.copy()
+        else:
+            # Fallback: solid color with icon
+            bg_color = ws.display.color.lstrip("#") if ws.display.color else "000000"
+            img = Image.new("RGB", (w, h), f"#{bg_color}")
+            # Render icon on fallback
+            if ws.display.icon:
+                icon_font_size = min(w, h) // 3
+                icon_font = _default_font(icon_font_size)
+                draw = ImageDraw.Draw(img)
+                try:
+                    icon_bbox = draw.textbbox((0, 0), ws.display.icon, font=icon_font)
+                except Exception:
+                    icon_bbox = (0, 0, icon_font_size, icon_font_size)
+                icon_w2 = icon_bbox[2] - icon_bbox[0]
+                icon_h2 = icon_bbox[3] - icon_bbox[1]
+                icon_x = (w - icon_w2) // 2
+                icon_y = (h - icon_h2) // 2 - 5
+                try:
+                    draw.text((icon_x, icon_y), ws.display.icon, fill="white", font=icon_font)
+                except Exception:
+                    pass
+
+        # Composite label and badge on top of the sprite frame
+        draw = ImageDraw.Draw(img)
+        if ws.display.label:
+            self._draw_label(draw, ws.display.label, w, h)
+        if ws.display.badge:
+            self._draw_badge(draw, ws.display.badge, w, h)
+
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+
+    # ── Frame rendering ───────────────────────────
 
     def render_frame(self, frame: LayoutFrame) -> list[dict]:
         """
@@ -209,27 +304,50 @@ class SimRenderer:
 
         Returns a list of dicts, one per key, with PNG data as base64 + metadata.
         This is the format consumed by the Web Simulator frontend.
+
+        Each key dict now includes an ``animation_mode`` field:
+
+        - ``"css"`` — browser uses CSS keyframes for the animation (effect types)
+        - ``"sprite"`` — server sends pre-rendered sprite frames as PNG; browser
+          displays the image directly
+        - ``"none"`` — no animation; static key
         """
         import base64
 
+        now = _time_mod.monotonic()
         keys = []
+
         for i, widget_id in enumerate(frame.keymap):
             if widget_id and widget_id in frame.widgets:
                 ws = frame.widgets[widget_id]
-                png_bytes = self.render_key(ws.display)
+                display = ws.display
+                sprite_name = display.sprite if display.sprite else "none"
+                has_sprite = sprite_name and sprite_name != "none"
+                has_effect = display.animation in _EFFECT_ANIMATIONS
+
+                if has_sprite:
+                    # Sprite animation — server generates frame, browser shows image
+                    png_bytes = self._render_sprite_key(ws, sprite_name, now)
+                    animation_mode = "sprite"
+                else:
+                    # Static or CSS-effect key
+                    png_bytes = self.render_key(display)
+                    animation_mode = "css" if has_effect else "none"
+
                 keys.append({
                     "index": i,
                     "widget_id": widget_id,
                     "type": ws.type,
-                    "icon": ws.display.icon,
-                    "color": ws.display.color,
-                    "animation": ws.display.animation,
-                    "label": ws.display.label,
-                    "badge": ws.display.badge,
+                    "icon": display.icon,
+                    "color": display.color,
+                    "animation": display.animation,
+                    "animation_mode": animation_mode,
+                    "label": display.label,
+                    "badge": display.badge,
                     "image": base64.b64encode(png_bytes).decode("ascii"),
                 })
             else:
-                # Empty key — black
+                # Empty key — dark
                 img = Image.new("RGB", self.key_size, "#111111")
                 buf = io.BytesIO()
                 img.save(buf, format="PNG")
@@ -240,6 +358,7 @@ class SimRenderer:
                     "icon": "",
                     "color": "#111111",
                     "animation": "none",
+                    "animation_mode": "none",
                     "label": "",
                     "badge": None,
                     "image": base64.b64encode(buf.getvalue()).decode("ascii"),

@@ -198,6 +198,16 @@
   @keyframes crawl { 0%,100%{filter:brightness(1)} 30%{filter:brightness(1.4) saturate(1.3)} 60%{filter:brightness(0.9)} }
   @keyframes progress { 0%{background-position:0% 50%} 100%{background-position:200% 50%} }
 
+  /* Key animations — sprite-driven (server sends pre-rendered frames) */
+  .key.sprite {
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+  }
+  .key.sprite .icon,
+  .key.sprite .label,
+  .key.sprite .badge { display: none; }
+
   /* Empty state */
   .empty-state {
     text-align:center; padding:48px; color:var(--text-dim);
@@ -392,9 +402,13 @@
       <span class="arrow">▼</span> 🔧 Developer
     </div>
     <div class="sec-body" id="devBody">
-      <p style="color:var(--text-dim);font-size:0.68rem">API: <code>localhost:9734</code></p>
-      <button class="btn-sm" style="margin-top:6px" onclick="showWizard()">＋ New Virtual Terminal</button>
-      <button class="btn-sm" style="margin-top:4px;background:rgba(239,68,68,0.15);border-color:var(--danger);color:var(--danger);width:100%" onclick="shutdownDaemon()">⏻ Shutdown Daemon</button>
+      <p style="color:var(--text-dim);font-size:0.68rem;margin-bottom:6px" id="devStatus">Ready.</p>
+      <button class="btn-sm" style="width:100%;margin-top:4px;border-color:var(--accent);color:var(--accent)" onclick="devInjectWidget()">▶ Inject Test Widget</button>
+      <button class="btn-sm" style="width:100%;margin-top:4px" onclick="devCycleState()">↻ Cycle State</button>
+      <button class="btn-sm" style="width:100%;margin-top:4px;background:rgba(239,68,68,0.1);border-color:var(--danger);color:var(--danger)" onclick="devRemoveTestWidgets()">✕ Remove Test Widgets</button>
+      <hr style="border-color:var(--border);margin:8px 0">
+      <button class="btn-sm" style="width:100%;margin-top:4px" onclick="showWizard()">＋ New Virtual Terminal</button>
+      <button class="btn-sm" style="width:100%;margin-top:4px" onclick="shutdownDaemon()">⏻ Shutdown Daemon</button>
     </div>
   </div>
 
@@ -688,15 +702,32 @@ function updateKeys(keys) {
   keys.forEach(k => {
     const keyEl = grid.querySelector(`.key[data-index="${k.index}"]`);
     if (!keyEl) return;
-    keyEl.style.backgroundColor = k.color || '#111';
-    keyEl.innerHTML = '';
-    if (k.widget_id) {
-      if (k.icon) { const icon = document.createElement('span'); icon.className='icon'; icon.textContent=k.icon; keyEl.appendChild(icon); }
-      if (k.label) { const label = document.createElement('span'); label.className='label'; label.textContent=k.label; keyEl.appendChild(label); }
-      if (k.badge) { const badge = document.createElement('span'); badge.className='badge'; badge.textContent=k.badge; keyEl.appendChild(badge); }
+
+    const animMode = k.animation_mode || 'none';
+
+    // Clear previous state
+    keyEl.classList.remove('pulse','blink','crawl','progress','sprite');
+    keyEl.style.backgroundImage = '';
+    keyEl.style.backgroundColor = '';
+
+    if (animMode === 'sprite') {
+      // Server sends pre-rendered sprite frames as PNG base64
+      keyEl.classList.add('sprite');
+      keyEl.style.backgroundImage = `url(data:image/png;base64,${k.image})`;
+      keyEl.innerHTML = '';
+    } else {
+      // Static or CSS-effect key
+      keyEl.style.backgroundColor = k.color || '#111';
+      keyEl.innerHTML = '';
+      if (k.widget_id) {
+        if (k.icon) { const icon = document.createElement('span'); icon.className='icon'; icon.textContent=k.icon; keyEl.appendChild(icon); }
+        if (k.label) { const label = document.createElement('span'); label.className='label'; label.textContent=k.label; keyEl.appendChild(label); }
+        if (k.badge) { const badge = document.createElement('span'); badge.className='badge'; badge.textContent=k.badge; keyEl.appendChild(badge); }
+      }
+      if (animMode === 'css' && k.animation && k.animation !== 'none') {
+        keyEl.classList.add(k.animation);
+      }
     }
-    keyEl.classList.remove('pulse','blink','crawl','progress');
-    if (k.animation && k.animation !== 'none') keyEl.classList.add(k.animation);
   });
 
   // Update inspector if the selected key changed
@@ -1185,6 +1216,73 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ═══════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════
+// Developer Tools
+// ═══════════════════════════════════════════════════
+let devCycleIdx = 0;
+const devStates = [
+  { icon: '🐙', color: '#22c55e', animation: 'crawl',  label: 'Running',  sprite: 'test_bounce' },
+  { icon: '🐙', color: '#7c3aed', animation: 'pulse',  label: 'Thinking', sprite: 'test_bounce' },
+  { icon: '🐙', color: '#eab308', animation: 'blink',  label: 'Waiting',  sprite: 'test_bounce' },
+  { icon: '🐙', color: '#166534', animation: 'none',   label: 'Idle',     sprite: 'none' },
+];
+let devWidgetId = null;
+
+async function devInjectWidget() {
+  // Clean up any old test widgets first to free key 0
+  await fetch('/api/debug/test-widgets', { method: 'DELETE' });
+  devWidgetId = null;
+
+  const state = devStates[devCycleIdx];
+  try {
+    const resp = await fetch('/api/debug/inject-widget', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key_index: 0, display: state }),
+    });
+    const data = await resp.json();
+    if (data.error) { throw new Error(data.error); }
+    devWidgetId = data.widget_id;
+    document.getElementById('devStatus').textContent =
+      'Widget: ' + data.widget_id + ' @ key ' + data.key_index + ' | sprite: ' + state.sprite;
+  } catch(e) {
+    document.getElementById('devStatus').textContent = 'Error: ' + e.message;
+  }
+}
+
+function devCycleState() {
+  devCycleIdx = (devCycleIdx + 1) % devStates.length;
+  const state = devStates[devCycleIdx];
+  if (devWidgetId) {
+    // Re-inject with same id to update the existing widget
+    fetch('/api/debug/inject-widget', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ widget_id: devWidgetId, display: state }),
+    }).then(r => r.json()).then(data => {
+      document.getElementById('devStatus').textContent =
+        'State: ' + state.label + ' | sprite: ' + state.sprite;
+    }).catch(e => {
+      document.getElementById('devStatus').textContent = 'Error: ' + e.message;
+    });
+  } else {
+    document.getElementById('devStatus').textContent =
+      'Next state: ' + state.label + ' (click Inject first)';
+  }
+}
+
+async function devRemoveTestWidgets() {
+  try {
+    const resp = await fetch('/api/debug/test-widgets', { method: 'DELETE' });
+    const data = await resp.json();
+    devWidgetId = null;
+    document.getElementById('devStatus').textContent =
+      'Removed: ' + (data.removed || []).join(', ') || 'none';
+  } catch(e) {
+    document.getElementById('devStatus').textContent = 'Error: ' + e.message;
+  }
+}
+
 // Shutdown
 // ═══════════════════════════════════════════════════
 async function shutdownDaemon() {
