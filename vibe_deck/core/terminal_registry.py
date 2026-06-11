@@ -140,3 +140,33 @@ class TerminalRegistry:
         if t is None:
             return False
         return self.remove(t.id)
+
+    def rename(self, terminal_id: str, new_name: str) -> bool:
+        """Rename a terminal. Updates config and saves. Returns True on success."""
+        t = self.get_by_id(terminal_id)
+        if t is None:
+            return False
+        t.name = new_name
+        self.save()
+        log.info("Renamed terminal %r to %r", terminal_id, new_name)
+        return True
+
+    def update_grid(self, terminal_id: str, new_grid: str) -> bool:
+        """Change terminal grid. Validates format (NxM). Updates and saves."""
+        t = self.get_by_id(terminal_id)
+        if t is None:
+            return False
+        parts = new_grid.split("x")
+        if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
+            log.warning("Invalid grid format %r — expected NxM", new_grid)
+            return False
+        t.grid = new_grid
+        self.save()
+        log.info("Updated grid for terminal %r to %r", terminal_id, new_grid)
+        return True
+
+    def count(self) -> int:
+        """Return the number of registered terminals."""
+        if self._config is None:
+            return 0
+        return len(self._config.terminals)

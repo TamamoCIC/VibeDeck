@@ -398,9 +398,37 @@ class VibeDeckSupervisor:
                 ds.label = _tool_name[:12]  # max 12 chars
                 log.info("[HOOK→UI] label override → %s", ds.label)
 
+            # Detect interactive / user-blocking tools (AskUserQuestion etc.)
+            # and switch to "Waiting for user" state so the thinking timer
+            # doesn't overwrite it while Claude waits for a response.
+            _INTERACTIVE_TOOLS = {"AskUserQuestion", "AskUserQuestionTool"}
+            if _hook_event == "PreToolUse" and _tool_name in _INTERACTIVE_TOOLS:
+                ds.icon = "❓"
+                ds.color = "#eab308"
+                ds.animation = "blink"
+                ds.label = "Asking..."
+                log.info("[HOOK→UI] interactive tool %s → Waiting for user", _tool_name)
+
             # Apply session status label from hook events that carry it
             if _hook_event == "Stop" and data.get("stop_hook_active"):
                 ds.label = "Paused"
+                ds.animation = "blink"  # thinking timer protects blink states
+                ds.color = "#eab308"
+                ds.icon = "⏸️"
+
+            # ── Project identity (from cwd) ──────────────────
+            # Extract project name from working directory so the Pool
+            # and Deck show human-readable project labels (e.g. "VibeDeck",
+            # "dungeonless") instead of raw PIDs.
+            _cwd = data.get("cwd", "")
+            if _cwd:
+                from pathlib import Path as _Path
+                _project = _Path(_cwd).name
+                data["project"] = _project
+                # Set initial label to project name if this is the first
+                # hook event (SessionStart) and no tool event has overridden it.
+                if _hook_event == "SessionStart":
+                    ds.label = _project[:12]
 
             log.info("[HOOK→UI] display resolved → icon=%s color=%s anim=%s label=%s",
                      ds.icon, ds.color, ds.animation, ds.label)
@@ -471,6 +499,13 @@ class VibeDeckSupervisor:
                 # a minimum display duration before overwriting with "Thinking".
                 if _hook_event in ("PreToolUse", "PostToolUse"):
                     existing._last_tool_ts = _time.time()
+                # Track hook event type & permission mode for inference
+                # (e.g. PreToolUse + non-auto permission → likely waiting for approval)
+                if _is_hook_event:
+                    existing._last_hook_event = _hook_event
+                    _pm = data.get("permission_mode", "")
+                    if _pm:
+                        existing._permission_mode = _pm
                 updated_tids.append(tid)
                 log.debug("[HOOK→UI] widget %s UPDATED on terminal %s", widget_id, tid)
 
@@ -617,7 +652,7 @@ class VibeDeckSupervisor:
                         current_label = ws.display.label
                         current_anim = ws.display.animation.value if hasattr(ws.display.animation, 'value') else str(ws.display.animation)
                         # Definitive states — never overwrite.
-                        if current_label in ("Idle", "Offline", "Error", "Sub done"):
+                        if current_label in ("Idle", "Offline", "Error", "Sub done", "Paused", "Asking..."):
                             continue
                         if current_anim in ("blink",):
                             continue
@@ -627,11 +662,25 @@ class VibeDeckSupervisor:
                             min_display_s = get_min_display_ms("PreToolUse") / 1000.0
                             if tool_age_s < min_display_s:
                                 continue  # tool name is still fresh
-                        ds = DisplayState(**thinking_cfg)
+
+                        # ── Permission / Approval inference ──────
+                        # If the last hook was PreToolUse and permission is
+                        # not auto, Claude is likely blocked waiting for user
+                        # approval — not actually thinking.
+                        _last_evt = getattr(ws, '_last_hook_event', '')
+                        _perm = getattr(ws, '_permission_mode', 'auto')
+                        if _last_evt == "PreToolUse" and _perm != "auto":
+                            ds = DisplayState(
+                                icon="🛡️", color="#eab308",
+                                animation="blink", label="Approval?",
+                            )
+                        else:
+                            ds = DisplayState(**thinking_cfg)
+
                         ws.display = ds
                         pushed = True
-                        log.info("[THINKING] widget %s → Thinking (%.1fs silence on terminal %s)",
-                                 widget_id, timeout_s, tid)
+                        log.info("[THINKING] widget %s → %s (%.1fs silence on terminal %s, last_evt=%s, perm=%s)",
+                                 widget_id, ds.label, timeout_s, tid, _last_evt, _perm)
                     # Force immediate frame push for terminals that changed
                     if pushed and hasattr(self, '_web_server'):
                         await self._web_server.broadcast_frame(tid, frame)

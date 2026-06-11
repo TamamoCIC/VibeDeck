@@ -419,6 +419,7 @@
       <button class="btn-sm" style="width:100%;margin-bottom:4px" onclick="showThemeEditor()">💅 UI Theme</button>
       <button class="btn-sm" style="width:100%;margin-bottom:4px" onclick="showSaveDialog()">💾 Save Layout</button>
       <button class="btn-sm" style="width:100%" onclick="showLoadDialog()">📂 Load Layout</button>
+      <button class="btn-sm" style="width:100%;margin-top:6px;border-color:var(--accent);color:var(--accent)" onclick="window.location.hash='settings'">⚙️ Full Settings</button>
     </div>
   </div>
 </aside>
@@ -568,6 +569,9 @@
   </div>
 </div>
 </div>
+
+<!-- ═══ Settings iframe (full-viewport overlay) ═══ -->
+<iframe id="settingsFrame" src="" style="display:none;position:fixed;inset:0;width:100vw;height:100vh;border:none;z-index:500;background:var(--bg)"></iframe>
 
 <!-- Toast container -->
 <div id="toastContainer"></div>
@@ -910,6 +914,38 @@ function saveToken(t) {
 }
 
 // ═══════════════════════════════════════════════════
+// Hash routing
+// ═══════════════════════════════════════════════════
+function handleHash() {
+  const hash = window.location.hash.slice(1); // remove '#'
+  const app = document.getElementById('app');
+  const wizard = document.getElementById('wizard-view');
+  const settingsFrame = document.getElementById('settingsFrame');
+
+  // Hide everything first
+  if (app) app.style.display = 'none';
+  if (wizard) wizard.style.display = 'none';
+  if (settingsFrame) { settingsFrame.style.display = 'none'; settingsFrame.src = ''; }
+
+  if (hash === 'settings') {
+    if (settingsFrame) {
+      settingsFrame.style.display = '';
+      settingsFrame.src = '/static/settings.html';
+    }
+  } else if (hash === 'wizard') {
+    if (wizard) wizard.style.display = '';
+    if (app) app.style.display = '';
+  } else {
+    // Default — show app (deck view)
+    if (app) app.style.display = '';
+  }
+}
+
+// Initial hash check + listen for changes
+document.addEventListener('DOMContentLoaded', handleHash);
+window.addEventListener('hashchange', handleHash);
+
+// ═══════════════════════════════════════════════════
 // Wizard
 // ═══════════════════════════════════════════════════
 function selectGrid(el) {
@@ -919,16 +955,13 @@ function selectGrid(el) {
 }
 
 function showWizard() {
-  document.getElementById('app').style.display = 'none';
-  document.getElementById('wizard-view').style.display = '';
+  window.location.hash = 'wizard';
   const hasToken = !!getToken();
   document.getElementById('wizardBackRow').style.display = hasToken ? '' : 'none';
 }
 
 function hideWizard() {
-  document.getElementById('wizard-view').style.display = 'none';
-  document.getElementById('app').style.display = '';
-  loadTerminalList();
+  window.location.hash = '';
 }
 
 async function doRegister() {
@@ -990,15 +1023,20 @@ function renderPool(widgets) {
       '<button class="pool-btn deactivate" onclick="event.stopPropagation();deactivateWidget(\'' + esc(w.id) + '\',\'' + esc(tid) + '\')" title="Remove from ' + esc(tid) + '">✕ ' + esc(tid === 'default' ? 'Web' : tid.slice(0,6)) + '</button>'
     ).join('');
 
+    // Project name from cwd is the human-readable identifier; fall back to label/id
+    const projectName = w.project || w.meta?.project || '';
+    const primaryLabel = projectName || w.label || w.id;
+    const subLabel = projectName ? (w.label !== projectName ? w.label : w.id) : w.id;
+
     return '<div class="pool-item" draggable="true"' +
       ' data-widget-id="' + esc(w.id) + '"' +
       ' ondragstart="onPoolDragStart(event)"' +
       ' ondragend="onPoolDragEnd(event)"' +
-      ' title="' + esc(w.id) + '">' +
+      ' title="' + esc(w.id) + ' | ' + esc(primaryLabel) + '">' +
       '<span class="pool-dot" style="background:' + esc(w.color) + ';box-shadow:0 0 5px ' + esc(w.color) + '"></span>' +
       '<span class="pool-icon">' + esc(w.icon) + '</span>' +
-      '<span class="pool-label">' + esc(w.label || w.id) + '</span>' +
-      '<span class="pool-status" style="color:' + (activated.length > 0 ? 'var(--accent)' : 'var(--text-dim)') + '">' + statusLabel + '</span>' +
+      '<span class="pool-label">' + esc(primaryLabel) + '</span>' +
+      '<span class="pool-status" style="color:' + (activated.length > 0 ? 'var(--accent)' : 'var(--text-dim)') + '">' + esc(subLabel) + '</span>' +
       '<span class="pool-actions">' + deactivateBtns +
       (activated.length === 0
         ? '<select class="pool-btn activate" onclick="event.stopPropagation()" onchange="activateOnTerminal(\'' + esc(w.id) + '\', this.value); this.value=\'\'" title="Place on terminal" style="font-size:0.55rem">' +
@@ -1110,9 +1148,16 @@ function setupDropTargets() {
 }
 
 async function init() {
+  // If hash is already set (e.g. #settings from page load), let handleHash handle it
+  const hash = window.location.hash.slice(1);
+  if (hash === 'settings') return;  // settings.html iframe handles itself
+  if (hash === 'wizard') {
+    document.getElementById('wizard-view').style.display = '';
+    return;
+  }
+
   const token = getToken();
   if (!token) {
-    document.getElementById('app').style.display = 'none';
     document.getElementById('wizard-view').style.display = '';
     return;
   }
@@ -1122,11 +1167,9 @@ async function init() {
       const data = await resp.json();
       showApp(data.terminal.grid, data.terminal.name);
     } else {
-      document.getElementById('app').style.display = 'none';
       document.getElementById('wizard-view').style.display = '';
     }
   } catch(e) {
-    document.getElementById('app').style.display = 'none';
     document.getElementById('wizard-view').style.display = '';
   }
 }

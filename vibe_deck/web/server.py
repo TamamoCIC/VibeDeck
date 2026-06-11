@@ -88,6 +88,31 @@ class VibeDeckWebServer:
         self._app.router.add_post("/api/pool/deactivate", self._pool_deactivate_handler)
         # Shutdown
         self._app.router.add_post("/api/shutdown", self._shutdown_handler)
+
+        # ── Daemon Config ────────────────────────────
+        self._app.router.add_get("/api/config", self._get_config)
+        self._app.router.add_post("/api/config", self._post_config)
+
+        # ── Terminal Management ──────────────────────
+        self._app.router.add_post("/api/terminals/{id}/rename", self._terminal_rename)
+        self._app.router.add_delete("/api/terminals/{id}", self._terminal_delete)
+        self._app.router.add_post("/api/terminals/{id}/grid", self._terminal_set_grid)
+
+        # ── Layout Management ────────────────────────
+        self._app.router.add_delete("/api/layouts/{name}", self._layout_delete)
+        self._app.router.add_post("/api/layouts/{name}/rename", self._layout_rename)
+
+        # ── Adapter Management ───────────────────────
+        self._app.router.add_get("/api/adapters", self._list_adapters)
+        self._app.router.add_get("/api/adapters/{name}/config", self._get_adapter_config)
+        self._app.router.add_post("/api/adapters/{name}/config", self._post_adapter_config)
+        self._app.router.add_get("/api/adapters/{name}/appearance", self._get_adapter_appearance)
+        self._app.router.add_post("/api/adapters/{name}/appearance", self._post_adapter_appearance)
+
+        # ── Timing ───────────────────────────────────
+        self._app.router.add_get("/api/timing", self._get_timing)
+        self._app.router.add_post("/api/timing", self._post_timing)
+
         self._app.router.add_static("/static/", STATIC_DIR, show_index=False)
 
     @property
@@ -178,6 +203,12 @@ class VibeDeckWebServer:
         # Serialize pool data so the UI gets real-time pool updates
         pool_widgets = []
         for ws in self._engine.pool_list():
+            # Extract project name from cwd for human-readable pool labels
+            cwd = ws.meta.get("cwd", "")
+            project = ws.meta.get("project", "")
+            if not project and cwd:
+                from pathlib import Path as _PPath
+                project = _PPath(cwd).name
             pool_widgets.append({
                 "id": ws.id,
                 "type": ws.type.value,
@@ -186,6 +217,7 @@ class VibeDeckWebServer:
                 "animation": ws.display.animation.value if hasattr(ws.display.animation, 'value') else str(ws.display.animation),
                 "label": ws.display.label,
                 "badge": ws.display.badge,
+                "project": project,
                 "meta": ws.meta,
                 "activated_on": self._engine.pool_activated_terminals(ws.id),
             })
@@ -581,6 +613,11 @@ class VibeDeckWebServer:
         """Return all widgets in the pool with activation status."""
         widgets = []
         for ws in self._engine.pool_list():
+            cwd = ws.meta.get("cwd", "")
+            project = ws.meta.get("project", "")
+            if not project and cwd:
+                from pathlib import Path as _PPath
+                project = _PPath(cwd).name
             widgets.append({
                 "id": ws.id,
                 "type": ws.type.value,
@@ -589,6 +626,7 @@ class VibeDeckWebServer:
                 "animation": ws.display.animation.value if hasattr(ws.display.animation, 'value') else str(ws.display.animation),
                 "label": ws.display.label,
                 "badge": ws.display.badge,
+                "project": project,
                 "meta": ws.meta,
                 "activated_on": self._engine.pool_activated_terminals(ws.id),
             })
@@ -656,6 +694,484 @@ class VibeDeckWebServer:
             import asyncio
             asyncio.get_running_loop().call_soon(self._shutdown_cb)
         return web.json_response({"status": "ok", "message": "Shutting down..."})
+
+
+    # ── Daemon Config ──────────────────────────────
+
+    async def _get_config(self, request: web.Request) -> web.Response:
+        """Return the full daemon configuration."""
+        from ..config import load_config
+        try:
+            cfg = load_config()
+        except Exception:
+            log.exception("Failed to load config")
+            return web.json_response({"error": "failed to load config"}, status=500)
+
+        return web.json_response({
+            "port": cfg.port,
+            "expose": cfg.expose,
+            "autodetect": cfg.autodetect,
+            "render": cfg.render,
+            "device_index": cfg.device_index,
+            "timing": cfg.timing.to_dict(),
+            "adapter_configs": [a.to_dict() for a in cfg.adapter_configs],
+        })
+
+    async def _post_config(self, request: web.Request) -> web.Response:
+        """Update daemon config with partial JSON merge."""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid JSON body"}, status=400)
+
+        from ..config import load_config, save_config
+        try:
+            cfg = load_config()
+        except Exception:
+            log.exception("Failed to load config for update")
+            return web.json_response({"error": "failed to load config"}, status=500)
+
+        # Merge top-level fields
+        if "port" in body:
+            cfg.port = int(body["port"])
+        if "expose" in body:
+            cfg.expose = bool(body["expose"])
+        if "autodetect" in body:
+            cfg.autodetect = bool(body["autodetect"])
+        if "render" in body:
+            cfg.render = str(body["render"])
+        if "device_index" in body:
+            cfg.device_index = int(body["device_index"])
+
+        # Merge timing sub-config
+        if "timing" in body and isinstance(body["timing"], dict):
+            for key, val in body["timing"].items():
+                if hasattr(cfg.timing, key):
+                    setattr(cfg.timing, key, int(val))
+
+        # Merge adapter_configs
+        if "adapter_configs" in body and isinstance(body["adapter_configs"], list):
+            from ..config import AdapterConfig
+            updated = {a.name for a in cfg.adapter_configs}
+            for raw in body["adapter_configs"]:
+                if isinstance(raw, dict) and "name" in raw:
+                    ac = AdapterConfig.from_dict(raw)
+                    if raw["name"] in updated:
+                        # Replace existing
+                        for i, existing in enumerate(cfg.adapter_configs):
+                            if existing.name == raw["name"]:
+                                cfg.adapter_configs[i] = ac
+                                break
+                    else:
+                        cfg.adapter_configs.append(ac)
+
+        try:
+            save_config(cfg)
+        except Exception:
+            log.exception("Failed to save config")
+            return web.json_response({"error": "failed to save config"}, status=500)
+
+        log.info("Daemon config updated via API")
+        return web.json_response({
+            "status": "ok",
+            "config": {
+                "port": cfg.port,
+                "autodetect": cfg.autodetect,
+                "render": cfg.render,
+                "timing": cfg.timing.to_dict(),
+                "adapter_configs": [a.to_dict() for a in cfg.adapter_configs],
+            },
+        })
+
+    # ── Terminal Management ─────────────────────────
+
+    async def _terminal_rename(self, request: web.Request) -> web.Response:
+        """Rename a terminal by id."""
+        terminal_id = request.match_info["id"]
+
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid JSON body"}, status=400)
+
+        new_name = body.get("name", "").strip()
+        if not new_name:
+            return web.json_response({"error": "name is required"}, status=400)
+
+        terminal = self._registry.get_by_id(terminal_id)
+        if terminal is None:
+            return web.json_response({"error": f"terminal {terminal_id!r} not found"}, status=404)
+
+        terminal.name = new_name
+        self._registry.save()
+        log.info("Terminal %r renamed to %r", terminal_id, new_name)
+        return web.json_response({"status": "ok", "terminal": terminal.to_dict()})
+
+    async def _terminal_delete(self, request: web.Request) -> web.Response:
+        """Remove a terminal by id."""
+        terminal_id = request.match_info["id"]
+
+        if terminal_id == "default":
+            return web.json_response({"error": "cannot delete the default terminal"}, status=400)
+
+        terminal = self._registry.get_by_id(terminal_id)
+        if terminal is None:
+            return web.json_response({"error": f"terminal {terminal_id!r} not found"}, status=404)
+
+        # Remove from registry
+        removed = self._registry.remove(terminal_id)
+        if not removed:
+            return web.json_response({"error": "failed to remove terminal"}, status=500)
+
+        # Unregister from layout engine
+        self._engine.unregister_terminal(terminal_id)
+
+        log.info("Terminal %r deleted", terminal_id)
+        return web.json_response({"status": "ok"})
+
+    async def _terminal_set_grid(self, request: web.Request) -> web.Response:
+        """Change a terminal's grid size."""
+        terminal_id = request.match_info["id"]
+
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid JSON body"}, status=400)
+
+        grid = body.get("grid", "").strip()
+        if not grid:
+            return web.json_response({"error": "grid is required (e.g. 4x8)"}, status=400)
+
+        # Validate grid format
+        try:
+            rows, cols = map(int, grid.split("x"))
+        except (ValueError, TypeError):
+            return web.json_response({"error": f"invalid grid format: {grid!r} (expected e.g. 4x8)"}, status=400)
+
+        # Validate allowed grids
+        valid_grids = ("3x4", "3x5", "4x8")
+        if grid not in valid_grids:
+            return web.json_response({"error": f"invalid grid {grid!r}; valid: {', '.join(valid_grids)}"}, status=400)
+
+        terminal = self._registry.get_by_id(terminal_id)
+        if terminal is None:
+            return web.json_response({"error": f"terminal {terminal_id!r} not found"}, status=404)
+
+        # Update registry
+        terminal.grid = grid
+        self._registry.save()
+        log.info("Terminal %r grid changed to %s", terminal_id, grid)
+
+        # Re-register in layout engine with new dimensions
+        self._engine.register_terminal(terminal_id, rows, cols, terminal.name)
+
+        return web.json_response({"status": "ok", "terminal": terminal.to_dict()})
+
+    # ── Layout Management ───────────────────────────
+
+    async def _layout_delete(self, request: web.Request) -> web.Response:
+        """Delete a saved layout file by name."""
+        name = request.match_info["name"]
+        safe_name = name.replace("/", "_").replace("\\", "_")
+
+        from ..config import LAYOUTS_DIR
+        path = LAYOUTS_DIR / f"{safe_name}.yaml"
+        if not path.exists():
+            return web.json_response({"error": f"layout {name!r} not found"}, status=404)
+
+        try:
+            path.unlink()
+        except OSError:
+            log.exception("Failed to delete layout %s", path)
+            return web.json_response({"error": "failed to delete layout file"}, status=500)
+
+        log.info("Layout %r deleted", name)
+        return web.json_response({"status": "ok", "name": name})
+
+    async def _layout_rename(self, request: web.Request) -> web.Response:
+        """Rename a saved layout file."""
+        old_name = request.match_info["name"]
+
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid JSON body"}, status=400)
+
+        new_name = body.get("new_name", "").strip()
+        if not new_name:
+            return web.json_response({"error": "new_name is required"}, status=400)
+
+        safe_old = old_name.replace("/", "_").replace("\\", "_")
+        safe_new = new_name.replace("/", "_").replace("\\", "_")
+
+        from ..config import LAYOUTS_DIR
+        old_path = LAYOUTS_DIR / f"{safe_old}.yaml"
+        new_path = LAYOUTS_DIR / f"{safe_new}.yaml"
+
+        if not old_path.exists():
+            return web.json_response({"error": f"layout {old_name!r} not found"}, status=404)
+
+        if new_path.exists():
+            return web.json_response({"error": f"layout {new_name!r} already exists"}, status=409)
+
+        try:
+            old_path.rename(new_path)
+        except OSError:
+            log.exception("Failed to rename layout %s -> %s", old_path, new_path)
+            return web.json_response({"error": "failed to rename layout file"}, status=500)
+
+        log.info("Layout %r renamed to %r", old_name, new_name)
+        return web.json_response({"status": "ok", "old_name": old_name, "new_name": new_name})
+
+    # ── Adapter Management ──────────────────────────
+
+    async def _list_adapters(self, request: web.Request) -> web.Response:
+        """List all registered adapters with status and config schema."""
+        from ..core.event_loop import _ADAPTER_REGISTRY
+        from ..config import load_config
+
+        cfg = load_config()
+        adapter_cfgs = {a.name: a for a in cfg.adapter_configs}
+
+        adapters = []
+        for agent_name, adapter_cls in _ADAPTER_REGISTRY.items():
+            ac = adapter_cfgs.get(agent_name)
+            adapters.append({
+                "name": agent_name,
+                "enabled": ac.enabled if ac else True,
+                "class": adapter_cls.__name__,
+                "module": adapter_cls.__module__,
+            })
+
+        return web.json_response({"adapters": adapters})
+
+    async def _get_adapter_config(self, request: web.Request) -> web.Response:
+        """Get adapter-specific config."""
+        adapter_name = request.match_info["name"]
+
+        from ..config import load_config
+        cfg = load_config()
+        for ac in cfg.adapter_configs:
+            if ac.name == adapter_name:
+                return web.json_response({
+                    "name": ac.name,
+                    "enabled": ac.enabled,
+                    "config": ac.config,
+                })
+
+        return web.json_response({
+            "name": adapter_name,
+            "enabled": True,
+            "config": {},
+        })
+
+    async def _post_adapter_config(self, request: web.Request) -> web.Response:
+        """Update adapter-specific config."""
+        adapter_name = request.match_info["name"]
+
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid JSON body"}, status=400)
+
+        from ..config import load_config, save_config, AdapterConfig
+        cfg = load_config()
+
+        # Find or create the adapter config entry
+        found = None
+        for ac in cfg.adapter_configs:
+            if ac.name == adapter_name:
+                found = ac
+                break
+
+        if found is None:
+            found = AdapterConfig(name=adapter_name)
+            cfg.adapter_configs.append(found)
+
+        # Merge fields
+        if "enabled" in body:
+            found.enabled = bool(body["enabled"])
+        if "config" in body and isinstance(body["config"], dict):
+            found.config.update(body["config"])
+
+        try:
+            save_config(cfg)
+        except Exception:
+            log.exception("Failed to save adapter config for %r", adapter_name)
+            return web.json_response({"error": "failed to save config"}, status=500)
+
+        log.info("Adapter config updated for %r", adapter_name)
+        return web.json_response({
+            "status": "ok",
+            "name": adapter_name,
+            "enabled": found.enabled,
+            "config": found.config,
+        })
+
+    async def _get_adapter_appearance(self, request: web.Request) -> web.Response:
+        """Get adapter appearance mapping.
+
+        Reads from the adapter's live STATUS_TO_DISPLAY (loaded from
+        adapter-specific YAML), falling back to config.yaml adapter_configs.
+        """
+        adapter_name = request.match_info["name"]
+
+        # 1. Try the adapter's live STATUS_TO_DISPLAY (e.g. claude-code.yaml)
+        from ..adapters.claude_code import STATUS_TO_DISPLAY as CC_DISPLAY
+        from ..adapters.opencode import STATUS_TO_DISPLAY as OC_DISPLAY
+        from ..adapters.openclaw import STATUS_TO_DISPLAY as OW_DISPLAY
+        from ..adapters.telegram import STATUS_TO_DISPLAY as TG_DISPLAY
+
+        DISPLAY_MAP = {
+            "claude-code": CC_DISPLAY,
+            "opencode": OC_DISPLAY,
+            "openclaw": OW_DISPLAY,
+            "telegram": TG_DISPLAY,
+        }
+
+        live = DISPLAY_MAP.get(adapter_name)
+        if live:
+            return web.json_response({
+                "name": adapter_name,
+                "appearance": dict(live),
+            })
+
+        # 2. Fallback: config.yaml adapter_configs
+        from ..config import load_config
+        cfg = load_config()
+        for ac in cfg.adapter_configs:
+            if ac.name == adapter_name:
+                return web.json_response({
+                    "name": ac.name,
+                    "appearance": ac.appearance,
+                })
+
+        return web.json_response({
+            "name": adapter_name,
+            "appearance": {},
+        })
+
+    async def _post_adapter_appearance(self, request: web.Request) -> web.Response:
+        """Update adapter appearance mapping.
+
+        Saves to both the adapter's live STATUS_TO_DISPLAY (which persists to
+        adapter-specific YAML) AND config.yaml for unified visibility.
+        """
+        adapter_name = request.match_info["name"]
+
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid JSON body"}, status=400)
+
+        appearance = body.get("appearance")
+        if appearance is None or not isinstance(appearance, dict):
+            return web.json_response({"error": "appearance dict is required"}, status=400)
+
+        # 1. Update the adapter's live STATUS_TO_DISPLAY (persists to YAML)
+        from ..adapters.claude_code import STATUS_TO_DISPLAY as CC_DISPLAY, _save_appearance_config as SAVE_CC
+        from ..adapters.opencode import STATUS_TO_DISPLAY as OC_DISPLAY
+
+        DISPLAY_MAP = {
+            "claude-code": CC_DISPLAY,
+            "opencode": OC_DISPLAY,
+        }
+
+        live = DISPLAY_MAP.get(adapter_name)
+        if live:
+            live.clear()
+            live.update(appearance)
+            # Persist to adapter YAML (claude-code has this, others will follow)
+            if adapter_name == "claude-code":
+                try:
+                    SAVE_CC(appearance)
+                except Exception:
+                    log.debug("Failed to persist claude-code appearance", exc_info=True)
+
+        # 2. Also persist to config.yaml for unified visibility
+        from ..config import load_config, save_config, AdapterConfig
+        cfg = load_config()
+
+        found = None
+        for ac in cfg.adapter_configs:
+            if ac.name == adapter_name:
+                found = ac
+                break
+
+        if found is None:
+            found = AdapterConfig(name=adapter_name)
+            cfg.adapter_configs.append(found)
+
+        found.appearance.update(appearance)
+
+        try:
+            save_config(cfg)
+        except Exception:
+            log.exception("Failed to save config appearance for %r", adapter_name)
+            return web.json_response({"error": "failed to save config"}, status=500)
+
+        log.info("Adapter appearance updated for %r (%d event mappings)", adapter_name, len(found.appearance))
+        return web.json_response({
+            "status": "ok",
+            "name": adapter_name,
+            "appearance": found.appearance,
+        })
+
+    # ── Timing ──────────────────────────────────────
+
+    async def _get_timing(self, request: web.Request) -> web.Response:
+        """Get global timing config."""
+        from ..adapters.claude_code import TIMING as cc_timing
+        return web.json_response({"timing": dict(cc_timing)})
+
+    async def _post_timing(self, request: web.Request) -> web.Response:
+        """Update global timing config."""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid JSON body"}, status=400)
+
+        timing = body.get("timing")
+        if timing is None or not isinstance(timing, dict):
+            return web.json_response({"error": "timing dict is required"}, status=400)
+
+        # Validate keys are known timing parameters
+        known_keys = {
+            "thinking_timeout_ms",
+            "activity_window_ms",
+            "fast_frame_interval_ms",
+            "slow_frame_interval_ms",
+        }
+        for key in timing:
+            if key not in known_keys:
+                return web.json_response(
+                    {"error": f"unknown timing key: {key!r}; valid: {', '.join(sorted(known_keys))}"},
+                    status=400,
+                )
+
+        # Update in-memory Timing
+        from ..adapters.claude_code import TIMING, APPEARANCE_CONFIG_PATH
+        import yaml
+
+        for key, val in timing.items():
+            TIMING[key] = int(val)
+
+        # Persist to YAML (same file as appearance)
+        try:
+            APPEARANCE_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            # Read existing to preserve events
+            raw = {}
+            if APPEARANCE_CONFIG_PATH.exists():
+                raw = yaml.safe_load(APPEARANCE_CONFIG_PATH.read_text(encoding="utf-8")) or {}
+            raw["timing"] = dict(TIMING)
+            with open(APPEARANCE_CONFIG_PATH, "w", encoding="utf-8") as f:
+                yaml.safe_dump(raw, f, default_flow_style=False, allow_unicode=True, indent=2)
+        except Exception:
+            log.exception("Failed to persist timing config")
+            return web.json_response({"error": "failed to persist timing config"}, status=500)
+
+        log.info("Timing config updated via API: %s", timing)
+        return web.json_response({"status": "ok", "timing": dict(TIMING)})
 
 
 # Default theme fallback (CSS custom properties)

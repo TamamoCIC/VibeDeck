@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VibeDeck Settings</title>
+<style>
+  :root {
+    --bg: #0f0f1a; --panel: #1a1a2e; --surface: #16213e;
+    --border: #2a2a4a; --text: #e0e0e0; --text-dim: #888;
+    --accent: #22c55e; --danger: #ef4444; --warn: #eab308; --info: #3b82f6;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',sans-serif;height:100vh;overflow:hidden}
+  ::-webkit-scrollbar{width:6px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+  ::-webkit-scrollbar-thumb:hover{background:#3a3a5a}
+
+  .sl{display:flex;height:100vh}
+  .sn{width:220px;min-width:220px;background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow-y:auto;padding-top:8px}
+  .sc{flex:1;overflow-y:auto;padding:24px 32px}
+  .sp{display:none}.sp.ac{display:block}
+
+  .bl{display:flex;align-items:center;gap:6px;padding:8px 14px;margin:0 8px 12px;border-radius:6px;cursor:pointer;font-size:.78rem;color:var(--text-dim);transition:all .15s}
+  .bl:hover{color:var(--text);background:var(--surface)}
+
+  .nl{padding:8px 14px 4px;font-size:.6rem;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:1px}
+  .ni{display:flex;align-items:center;gap:8px;padding:8px 14px;margin:1px 8px;border-radius:6px;cursor:pointer;font-size:.78rem;color:var(--text-dim);transition:all .12s;border-left:2px solid transparent}
+  .ni:hover{color:var(--text);background:var(--surface)}
+  .ni.ac{color:var(--text);background:rgba(34,197,94,.08);border-left-color:var(--accent)}
+  .ni .ni-icon{font-size:.95rem;width:20px;text-align:center}
+
+  .ph{margin-bottom:20px}.ph h2{font-size:1.2rem;font-weight:700}.ph p{color:var(--text-dim);font-size:.78rem;margin-top:4px}
+
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px 20px;margin-bottom:16px}
+  .card h3{font-size:.85rem;font-weight:600;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+  .fg{display:flex;align-items:center;gap:12px;padding:6px 0}.fg+.fg{border-top:1px solid rgba(255,255,255,.03)}
+  .fl{min-width:140px;font-size:.75rem;color:var(--text-dim)}
+  .fi,.fs{background:var(--surface);border:1px solid var(--border);color:var(--text);padding:5px 10px;border-radius:6px;font-size:.78rem;outline:none}
+  .fi:focus,.fs:focus{border-color:var(--accent)}
+  .fi{width:180px}.fi.wd{width:100%;max-width:400px}.fi.sm{width:80px}.fi.xs{width:60px}
+  .fh{font-size:.65rem;color:#555;margin-left:4px}
+
+  .tg{position:relative;display:inline-block;width:40px;height:22px;flex-shrink:0}
+  .tg input{opacity:0;width:0;height:0}
+  .tg .tgs{position:absolute;inset:0;background:var(--surface);border:1px solid var(--border);border-radius:22px;transition:all .2s;cursor:pointer}
+  .tg .tgs::before{content:'';position:absolute;height:14px;width:14px;left:3px;bottom:3px;background:var(--text-dim);border-radius:50%;transition:all .2s}
+  .tg input:checked+.tgs{background:var(--accent);border-color:var(--accent)}
+  .tg input:checked+.tgs::before{transform:translateX(18px);background:#000}
+
+  .btn{background:var(--surface);color:var(--text);border:1px solid var(--border);padding:6px 14px;border-radius:6px;font-size:.75rem;cursor:pointer;transition:all .12s;display:inline-flex;align-items:center;gap:4px}
+  .btn:hover{border-color:var(--accent)}
+  .btn-ac{background:var(--accent);color:#000;border-color:var(--accent);font-weight:600}
+  .btn-ac:hover{filter:brightness(1.15)}
+  .btn-dg{border-color:var(--danger);color:var(--danger)}
+  .btn-dg:hover{background:rgba(239,68,68,.1)}
+  .btn-sm{padding:3px 8px;font-size:.68rem}
+
+  .ic{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 16px;margin-bottom:8px;display:flex;align-items:center;gap:12px}
+  .ic .ii{font-size:1.2rem;flex-shrink:0}
+  .ic .if{flex:1;min-width:0}
+  .ic .it{font-size:.82rem;font-weight:600}
+  .ic .im{font-size:.68rem;color:var(--text-dim);margin-top:2px}
+  .ic .ia{display:flex;gap:6px;flex-shrink:0}
+  .tf{font-family:'SF Mono','Cascadia Code',monospace;font-size:.65rem;color:var(--text-dim);background:var(--bg);padding:2px 6px;border-radius:4px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+  .tf:hover{color:var(--accent)}
+
+  .sd{width:7px;height:7px;border-radius:50%;display:inline-block}
+  .sd.on{background:var(--accent);box-shadow:0 0 6px var(--accent)}
+  .sd.off{background:var(--danger)}
+  .sd.ia{background:var(--text-dim)}
+
+  /* Appearance rows */
+  .ar{display:grid;grid-template-columns:1.5fr .8fr 1fr 1.5fr .8fr;gap:8px;align-items:center;padding:6px 0;font-size:.73rem}
+  .ar+.ar{border-top:1px solid rgba(255,255,255,.03)}
+  .ar .en{font-weight:600;font-size:.72rem}
+  .ar input,.ar select{background:var(--surface);border:1px solid var(--border);color:var(--text);padding:3px 6px;border-radius:5px;font-size:.72rem}
+  .ar input[type=color]{width:32px;height:26px;padding:1px;cursor:pointer}
+  .ar input[type=text]{width:100%}.ar select{width:100%}
+
+  /* Adapter tabs */
+  .at{display:flex;gap:4px;margin-bottom:16px;flex-wrap:wrap}
+  .atb{padding:6px 14px;border-radius:20px;border:1px solid var(--border);background:var(--surface);color:var(--text-dim);font-size:.75rem;cursor:pointer;transition:all .12s}
+  .atb:hover{color:var(--text);border-color:var(--accent)}
+  .atb.ac{background:var(--accent);color:#000;border-color:var(--accent);font-weight:600}
+
+  .es{text-align:center;padding:32px;color:var(--text-dim);font-size:.78rem}
+  .es .ei{font-size:2rem;opacity:.4;margin-bottom:8px}
+
+  /* Toast */
+  #tc{position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column-reverse;gap:8px;pointer-events:none}
+  .toast{background:var(--panel);border:1px solid var(--border);color:var(--text);padding:10px 16px;border-radius:8px;font-size:.8rem;box-shadow:0 4px 20px rgba(0,0,0,.5);animation:ti .3s cubic-bezier(.16,1,.3,1);pointer-events:auto;max-width:320px}
+  .toast.out{animation:to .2s ease forwards}
+  .toast.ok{border-left:3px solid var(--accent)}
+  .toast.er{border-left:3px solid var(--danger)}
+  @keyframes ti{from{opacity:0;transform:translateX(60px)}to{opacity:1;transform:translateX(0)}}
+  @keyframes to{from{opacity:1;transform:translateX(0)}to{opacity:0;transform:translateX(60px)}}
+
+  @media(max-width:768px){
+    .sl{flex-direction:column}
+    .sn{width:100%;min-width:0;flex-direction:row;overflow-x:auto;padding:4px;flex-shrink:0;border-right:none;border-bottom:1px solid var(--border)}
+    .nl{display:none}.ni{flex-shrink:0;margin:2px;padding:6px 10px;font-size:.7rem}
+    .ni .ni-icon{font-size:.85rem}.bl{display:none}
+    .sc{padding:16px}
+    .ar{grid-template-columns:1fr .6fr .8fr 1fr .6fr;font-size:.68rem}
+    .fg{flex-wrap:wrap}.fl{min-width:100px}
+  }
+</style>
+</head>
+<body>
+<div class="sl">
+  <nav class="sn" id="nav">
+    <a class="bl" onclick="goBack()" title="Back to Deck">← Back to Deck</a>
+    <div class="nl">Configuration</div>
+    <div class="ni ac" data-panel="daemon" onclick="show('daemon')"><span class="ni-icon">🖥️</span>Daemon</div>
+    <div class="ni" data-panel="timing" onclick="show('timing')"><span class="ni-icon">⏱️</span>Timing</div>
+    <div class="ni" data-panel="appearance" onclick="show('appearance')"><span class="ni-icon">🎨</span>Appearance</div>
+    <div class="ni" data-panel="theme" onclick="show('theme')"><span class="ni-icon">💅</span>Theme</div>
+    <div class="nl">Management</div>
+    <div class="ni" data-panel="terminals" onclick="show('terminals')"><span class="ni-icon">📡</span>Terminals</div>
+    <div class="ni" data-panel="layouts" onclick="show('layouts')"><span class="ni-icon">📐</span>Layouts</div>
+    <div class="ni" data-panel="adapters" onclick="show('adapters')"><span class="ni-icon">🔌</span>Adapters</div>
+    <div class="nl">Info</div>
+    <div class="ni" data-panel="about" onclick="show('about')"><span class="ni-icon">ℹ️</span>About</div>
+  </nav>
+
+  <main class="sc" id="content">
+
+    <!-- ═══ Daemon ═══ -->
+    <div class="sp ac" data-panel="daemon" id="pn-daemon">
+      <div class="ph"><h2>🖥️ Daemon Configuration</h2><p>Core daemon settings. Port/expose changes require restart.</p></div>
+      <div class="card">
+        <h3>🌐 Server</h3>
+        <div class="fg"><span class="fl">Port</span><input class="fi sm" type="number" id="cfg-port" min="1024" max="65535"><span class="fh">default: 9734</span></div>
+        <div class="fg"><span class="fl">Expose to LAN</span><label class="tg"><input type="checkbox" id="cfg-expose" onchange="dirty('daemon')"><span class="tgs"></span></label><span class="fh">Bind 0.0.0.0</span></div>
+        <div class="fg"><span class="fl">Auto-detect Agents</span><label class="tg"><input type="checkbox" id="cfg-autodetect" onchange="dirty('daemon')"><span class="tgs"></span></label><span class="fh">Scan for agent processes</span></div>
+      </div>
+      <div class="card">
+        <h3>🖼️ Render</h3>
+        <div class="fg"><span class="fl">Render Mode</span><select class="fs" id="cfg-render" onchange="dirty('daemon')"><option value="sim">sim — Web Simulator</option><option value="hardware">hardware — Stream Deck</option></select></div>
+        <div class="fg"><span class="fl">Device Index</span><input class="fi sm" type="number" id="cfg-device-index" min="0" max="9" onchange="dirty('daemon')"><span class="fh">hw device #</span></div>
+      </div>
+      <div class="card">
+        <h3>📊 Status</h3>
+        <div id="daemon-info" class="fg"><span class="fl">Loading...</span></div>
+      </div>
+      <button class="btn btn-ac" onclick="saveDaemon()">💾 Save Daemon Config</button>
+      <span class="fh" style="margin-left:12px" id="daemon-dirty" hidden>Unsaved changes</span>
+    </div>
+
+    <!-- ═══ Timing ═══ -->
+    <div class="sp" data-panel="timing" id="pn-timing">
+      <div class="ph"><h2>⏱️ Timing Configuration</h2><p>Frame rate, activity detection, and minimum display durations.</p></div>
+      <div class="card">
+        <h3>⚡ Global Frame Timing</h3>
+        <div class="fg"><span class="fl">Thinking Timeout</span><input class="fi sm" type="number" id="cfg-tt" min="100" max="10000" step="50" onchange="dirty('timing')"><span class="fh">ms — silence before "Thinking"</span></div>
+        <div class="fg"><span class="fl">Activity Window</span><input class="fi sm" type="number" id="cfg-aw" min="500" max="30000" step="100" onchange="dirty('timing')"><span class="fh">ms — fast frame window</span></div>
+        <div class="fg"><span class="fl">Fast Frame Interval</span><input class="fi sm" type="number" id="cfg-ff" min="16" max="500" step="1" onchange="dirty('timing')"><span class="fh">ms (~30fps=33ms)</span></div>
+        <div class="fg"><span class="fl">Slow Frame Interval</span><input class="fi sm" type="number" id="cfg-sf" min="100" max="5000" step="50" onchange="dirty('timing')"><span class="fh">ms — idle push rate</span></div>
+      </div>
+      <div class="card">
+        <h3>⏳ Per-Event Min Display (ms)</h3>
+        <p style="font-size:.72rem;color:var(--text-dim);margin-bottom:10px">Minimum time each event's state stays visible before next event can override it.</p>
+        <div id="md-list"><p class="es">Loading...</p></div>
+      </div>
+      <button class="btn btn-ac" onclick="saveTiming()">💾 Save Timing</button>
+      <span class="fh" style="margin-left:12px" id="timing-dirty" hidden>Unsaved changes</span>
+    </div>
+
+    <!-- ═══ Appearance ═══ -->
+    <div class="sp" data-panel="appearance" id="pn-appearance">
+      <div class="ph"><h2>🎨 Widget Appearance</h2><p>Map adapter events to display primitives: icon, color, animation, label.</p></div>
+      <div class="at" id="app-at"></div>
+      <div id="app-ed"><p class="es">Select an adapter above</p></div>
+      <button class="btn btn-ac" onclick="saveAppearance()" style="margin-top:12px">💾 Save Appearance</button>
+    </div>
+
+    <!-- ═══ Theme ═══ -->
+    <div class="sp" data-panel="theme" id="pn-theme">
+      <div class="ph"><h2>💅 UI Theme</h2><p>Customize the Web UI colors. Live-previewed.</p></div>
+      <div class="card"><h3>🎨 CSS Variables</h3><div id="theme-ed"><p class="es">Loading...</p></div></div>
+      <div class="card">
+        <h3>🖼️ Presets</h3>
+        <div style="display:flex;gap:10px">
+          <button class="btn" onclick="themePreset('dark')">🌙 VibeDeck Dark</button>
+          <button class="btn" onclick="themePreset('light')">☀️ Light (experimental)</button>
+        </div>
+      </div>
+      <button class="btn btn-ac" onclick="saveTheme()" style="margin-top:8px">💾 Save Theme</button>
+      <button class="btn" onclick="resetTheme()" style="margin-left:8px">↩ Reset Default</button>
+    </div>
+
+    <!-- ═══ Terminals ═══ -->
+    <div class="sp" data-panel="terminals" id="pn-terminals">
+      <div class="ph"><h2>📡 Terminals</h2><p>Manage physical and virtual terminals.</p></div>
+      <div id="term-cards"><p class="es">Loading...</p></div>
+      <button class="btn" onclick="showWizard()" style="margin-top:12px">＋ Register New Terminal</button>
+    </div>
+
+    <!-- ═══ Layouts ═══ -->
+    <div class="sp" data-panel="layouts" id="pn-layouts">
+      <div class="ph"><h2>📐 Layouts</h2><p>Saved widget layouts.</p></div>
+      <div id="lay-cards"><p class="es">Loading...</p></div>
+      <button class="btn" onclick="importLayout()" style="margin-top:12px">📥 Import Layout (.yaml)</button>
+      <input type="file" id="lay-file" accept=".yaml,.yml" style="display:none" onchange="handleLayoutImport(event)">
+    </div>
+
+    <!-- ═══ Adapters ═══ -->
+    <div class="sp" data-panel="adapters" id="pn-adapters">
+      <div class="ph"><h2>🔌 Adapters</h2><p>Agent integration status and configuration.</p></div>
+      <div id="adap-cards"><p class="es">Loading...</p></div>
+      <div class="card" id="ap-card" style="display:none">
+        <h3>🔍 Agent Detection Patterns</h3>
+        <p style="font-size:.72rem;color:var(--text-dim);margin-bottom:8px">Process name patterns for auto-discovery.</p>
+        <div id="ap-list"></div>
+        <button class="btn btn-sm" onclick="addAgentPattern()" style="margin-top:6px">＋ Add Pattern</button>
+      </div>
+    </div>
+
+    <!-- ═══ About ═══ -->
+    <div class="sp" data-panel="about" id="pn-about">
+      <div class="ph"><h2>ℹ️ About VibeDeck</h2></div>
+      <div class="card">
+        <h3>🦞 VibeDeck</h3>
+        <p style="font-size:.85rem;margin-bottom:8px">Turn any terminal into a peripheral awareness device for local AI workflows.</p>
+        <div id="about-info"><p class="es">Loading...</p></div>
+      </div>
+      <div class="card">
+        <h3>⌨️ Keyboard Shortcuts</h3>
+        <table style="font-size:.75rem;width:100%">
+          <tr><td style="padding:4px 8px;color:var(--text-dim)"><kbd style="background:var(--surface);padding:1px 6px;border-radius:3px;border:1px solid var(--border)">0-9</kbd></td><td>Click key by index</td></tr>
+          <tr><td style="padding:4px 8px;color:var(--text-dim)"><kbd style="background:var(--surface);padding:1px 6px;border-radius:3px;border:1px solid var(--border)">M</kbd></td><td>Toggle Live / Inspect mode</td></tr>
+          <tr><td style="padding:4px 8px;color:var(--text-dim)"><kbd style="background:var(--surface);padding:1px 6px;border-radius:3px;border:1px solid var(--border)">Esc</kbd></td><td>Deselect widget / Close modal</td></tr>
+          <tr><td style="padding:4px 8px;color:var(--text-dim)"><kbd style="background:var(--surface);padding:1px 6px;border-radius:3px;border:1px solid var(--border)">#settings</kbd></td><td>Open Settings page</td></tr>
+        </table>
+      </div>
+      <div class="card">
+        <h3>🔗 API Endpoints</h3>
+        <table style="font-size:.7rem;width:100%;font-family:monospace">
+          <tr><td style="padding:3px 8px;color:var(--accent)">GET /api/events</td><td style="color:var(--text-dim)">SSE frame stream</td></tr>
+          <tr><td style="padding:3px 8px;color:var(--accent)">GET /api/config</td><td style="color:var(--text-dim)">Daemon configuration</td></tr>
+          <tr><td style="padding:3px 8px;color:var(--accent)">GET /api/adapters</td><td style="color:var(--text-dim)">Adapter list & status</td></tr>
+          <tr><td style="padding:3px 8px;color:var(--accent)">GET /api/terminals</td><td style="color:var(--text-dim)">Terminal list</td></tr>
+        </table>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div id="tc"></div>
+
+<script>
+// ═══════════════════════ Utilities ═══════════════════
+function toast(m,t){t=t||'ok';var c=document.getElementById('tc');var e=document.createElement('div');e.className='toast '+t;e.textContent=m;c.appendChild(e);setTimeout(function(){e.classList.add('out');e.addEventListener('animationend',function(){e.remove()})},2200)}
+function esc(s){return(s||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+var _dirty={};
+function dirty(p){_dirty[p]=true;var e=document.getElementById(p+'-dirty');if(e)e.hidden=false}
+function clean(p){_dirty[p]=false;var e=document.getElementById(p+'-dirty');if(e)e.hidden=true}
+function goBack(){try{window.parent.location.hash=''}catch(e){window.location='/'}}
+
+// ═══════════════════════ Navigation ═══════════════════
+var _cur='daemon';
+function show(p){
+  _cur=p;
+  document.querySelectorAll('.ni').forEach(function(e){e.classList.toggle('ac',e.dataset.panel===p)});
+  document.querySelectorAll('.sp').forEach(function(e){e.classList.toggle('ac',e.dataset.panel===p)});
+  window.location.hash='settings/'+p;
+  loadPanel(p);
+}
+function loadPanel(p){
+  switch(p){
+    case'daemon':ldc();break;case'timing':ltc();lmd();break;
+    case'appearance':laa();break;case'theme':lte();break;
+    case'terminals':ltm();break;case'layouts':lly();break;
+    case'adapters':lad();break;case'about':lab();break;
+  }
+}
+
+// Init
+(function(){
+  var h=window.location.hash.slice(1);
+  if(h.startsWith('settings/')){
+    var p=h.split('/')[1];
+    if(document.getElementById('pn-'+p))show(p);else show('daemon');
+  }
+  loadPanel(_cur);
+})();
+
+// ═══════════════════════ Daemon ═══════════════════════
+async function ldc(){
+  try{
+    var r=await fetch('/api/config');
+    if(!r.ok)throw new Error('offline');
+    var d=await r.json();
+    document.getElementById('cfg-port').value=d.port||9734;
+    document.getElementById('cfg-expose').checked=!!d.expose;
+    document.getElementById('cfg-autodetect').checked=d.autodetect!==false;
+    document.getElementById('cfg-render').value=d.render||'sim';
+    document.getElementById('cfg-device-index').value=d.device_index||0;
+    document.getElementById('daemon-info').innerHTML='<span class="fl">Version</span><span>v0.1-dev</span><span class="fl" style="margin-left:20px">API</span><span>localhost:'+(d.port||9734)+'</span>';
+    clean('daemon');
+  }catch(e){document.getElementById('daemon-info').innerHTML='<span class="fl" style="color:var(--danger)">Daemon offline — cannot load config</span>'}
+}
+async function saveDaemon(){
+  var p=parseInt(document.getElementById('cfg-port').value)||9734;
+  var ex=document.getElementById('cfg-expose').checked;
+  var ad=document.getElementById('cfg-autodetect').checked;
+  var rd=document.getElementById('cfg-render').value;
+  var di=parseInt(document.getElementById('cfg-device-index').value)||0;
+  try{
+    var r=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({port:p,autodetect:ad,render:rd,device_index:di})});
+    if(!r.ok){var e=await r.json();throw new Error(e.error||'save failed')}
+    clean('daemon');toast('Daemon config saved (restart to apply port/expose)');
+  }catch(e){toast(e.message,'er')}
+}
+
+// ═══════════════════════ Timing ═══════════════════════
+async function ltc(){
+  try{
+    var r=await fetch('/api/timing');
+    if(!r.ok)throw new Error('offline');
+    var d=await r.json();var t=d.timing||{};
+    document.getElementById('cfg-tt').value=t.thinking_timeout_ms||800;
+    document.getElementById('cfg-aw').value=t.activity_window_ms||3000;
+    document.getElementById('cfg-ff').value=t.fast_frame_interval_ms||33;
+    document.getElementById('cfg-sf').value=t.slow_frame_interval_ms||1000;
+    clean('timing');
+  }catch(e){}
+}
+async function lmd(){
+  var l=document.getElementById('md-list');l.innerHTML='<p class="es">Loading...</p>';
+  try{
+    var r=await fetch('/api/adapters');if(!r.ok)throw new Error('offline');
+    var d=await r.json();var a=d.adapters||[];var h='';
+    for(var i=0;i<a.length;i++){
+      var n=a[i].name;
+      try{
+        var ar=await fetch('/api/adapters/'+n+'/appearance');if(!ar.ok)continue;
+        var ad=await ar.json();var evs=ad.appearance||{};var ks=Object.keys(evs).sort();
+        if(!ks.length)continue;
+        h+='<div style="font-weight:600;font-size:.72rem;margin:8px 0 4px;color:var(--text)">'+esc(n)+'</div>';
+        for(var j=0;j<ks.length;j++){
+          var ev=ks[j];var ms=evs[ev].min_display_ms||'';
+          h+='<div class="fg"><span class="fl" style="min-width:160px">'+esc(ev)+'</span><input class="fi xs md-inp" type="number" data-adapter="'+esc(n)+'" data-event="'+esc(ev)+'" value="'+esc(String(ms))+'" placeholder="0" min="0" max="30000" step="50" onchange="dirty(\'timing\')"><span class="fh">ms</span></div>';
+        }
+      }catch(e2){}
+    }
+    l.innerHTML=h||'<p class="es">No events with min_display_ms</p>';
+  }catch(e){l.innerHTML='<p class="es">Failed to load</p>'}
+}
+async function saveTiming(){
+  try{
+    var t={thinking_timeout_ms:parseInt(document.getElementById('cfg-tt').value)||800,activity_window_ms:parseInt(document.getElementById('cfg-aw').value)||3000,fast_frame_interval_ms:parseInt(document.getElementById('cfg-ff').value)||33,slow_frame_interval_ms:parseInt(document.getElementById('cfg-sf').value)||1000};
+    var r=await fetch('/api/timing',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({timing:t})});
+    if(!r.ok){var e=await r.json();throw new Error(e.error)}
+
+    // Save per-event min_display_ms
+    var inps=document.querySelectorAll('.md-inp');var byA={};
+    inps.forEach(function(ip){var a=ip.dataset.adapter,ev=ip.dataset.event,v=parseInt(ip.value);if(!byA[a])byA[a]={};byA[a][ev]=isNaN(v)?null:v});
+    for(var a in byA){
+      try{
+        var ar=await fetch('/api/adapters/'+a+'/appearance');if(!ar.ok)continue;
+        var ad=await ar.json();var evs=ad.appearance||{};
+        for(var ev in byA[a]){if(byA[a][ev]!=null){if(!evs[ev])evs[ev]={};evs[ev].min_display_ms=String(byA[a][ev])}}
+        await fetch('/api/adapters/'+a+'/appearance',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({appearance:evs})});
+      }catch(e2){}
+    }
+    clean('timing');toast('Timing saved');
+  }catch(e){toast(e.message,'er')}
+}
+
+// ═══════════════════════ Appearance ═══════════════════
+var _aAdapters=[],_curAd='',_aData={};
+async function laa(){
+  try{
+    var r=await fetch('/api/adapters');if(!r.ok)throw new Error('offline');
+    var d=await r.json();_aAdapters=d.adapters||[];
+    var t=document.getElementById('app-at');
+    t.innerHTML=_aAdapters.map(function(a,i){return'<span class="atb'+(i===0?' ac':'')+'" data-adapter="'+esc(a.name)+'" onclick="selAd(\''+esc(a.name)+'\')">'+esc(a.name)+'</span>'}).join('');
+    if(_aAdapters.length>0)selAd(_aAdapters[0].name);
+  }catch(e){toast('Failed to load adapters','er')}
+}
+function selAd(n){
+  _curAd=n;
+  document.querySelectorAll('#app-at .atb').forEach(function(t){t.classList.toggle('ac',t.dataset.adapter===n)});
+  loadAppEd(n);
+}
+async function loadAppEd(n){
+  var ed=document.getElementById('app-ed');ed.innerHTML='<p class="es">Loading...</p>';
+  try{
+    var r=await fetch('/api/adapters/'+n+'/appearance');var d=await r.json();
+    _aData[n]=d.appearance||{};var evs=_aData[n];var ks=Object.keys(evs).sort();
+    if(!ks.length){ed.innerHTML='<p class="es">No appearance mappings for this adapter</p>';return}
+    ed.innerHTML='<div style="display:grid;grid-template-columns:1.5fr .8fr 1fr 1.5fr .8fr;gap:8px;font-size:.65rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.5px;padding:4px 0;margin-bottom:4px"><span>Event</span><span>Icon</span><span>Color</span><span>Animation</span><span>Label</span></div>'+
+      ks.map(function(ev){var e=evs[ev]||{};
+        return'<div class="ar" data-event="'+esc(ev)+'"><span class="en" title="'+esc(ev)+'">'+esc(ev)+'</span>'+
+          '<input type="text" value="'+esc(e.icon||'')+'" data-f="icon" maxlength="4" placeholder="🐙">'+
+          '<div style="display:flex;gap:2px;align-items:center"><input type="color" value="'+esc(e.color||'#000000')+'" data-f="color"><span style="font-size:.6rem;font-family:monospace">'+esc(e.color||'#000')+'</span></div>'+
+          '<select data-f="animation">'+['none','pulse','crawl','blink','progress'].map(function(a){return'<option'+(e.animation===a?' selected':'')+'>'+a+'</option>'}).join('')+'</select>'+
+          '<input type="text" value="'+esc(e.label||'')+'" data-f="label" maxlength="12" placeholder="Running"></div>';
+      }).join('');
+  }catch(e){ed.innerHTML='<p class="es">Failed to load</p>'}
+}
+async function saveAppearance(){
+  if(!_curAd)return;var evs={};
+  document.querySelectorAll('#app-ed .ar').forEach(function(rw){
+    var ev=rw.dataset.event;evs[ev]={};
+    rw.querySelectorAll('[data-f]').forEach(function(el){evs[ev][el.dataset.f]=el.value});
+  });
+  try{
+    var r=await fetch('/api/adapters/'+_curAd+'/appearance',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({appearance:evs})});
+    if(!r.ok){var e=await r.json();throw new Error(e.error)}
+    toast('Appearance saved for '+_curAd);
+  }catch(e){toast(e.message,'er')}
+}
+
+// ═══════════════════════ Theme ═══════════════════════
+var TV=['--bg','--panel','--surface','--border','--text','--text-dim','--accent','--danger','--warn','--info'];
+function lte(){
+  var b=document.getElementById('theme-ed'),rs=getComputedStyle(document.documentElement);
+  b.innerHTML=TV.map(function(v){var val=rs.getPropertyValue(v).trim();
+    return'<div class="fg"><span class="fl">'+esc(v)+'</span><input type="color" value="'+esc(val)+'" data-var="'+esc(v)+'" style="width:32px;height:28px"><input type="text" value="'+esc(val)+'" data-txt="'+esc(v)+'" class="fi" style="width:100px"></div>';
+  }).join('');
+  b.querySelectorAll('input[type=color]').forEach(function(c){
+    var t=b.querySelector('input[data-txt="'+c.dataset.var+'"]');
+    c.oninput=function(){t.value=c.value;document.documentElement.style.setProperty(c.dataset.var,c.value)};
+    t.oninput=function(){c.value=t.value;document.documentElement.style.setProperty(t.dataset.txt,t.value)};
+  });
+}
+async function saveTheme(){
+  var css=':root {\n';
+  document.querySelectorAll('#theme-ed input[type=text]').forEach(function(t){css+='  '+t.dataset.txt+': '+t.value+';\n'});
+  css+='}';
+  try{await fetch('/api/theme',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({css:css})});toast('Theme saved')}
+  catch(e){toast('Save failed','er')}
+}
+function themePreset(p){
+  var pr={dark:{'--bg':'#0f0f1a','--panel':'#1a1a2e','--surface':'#16213e','--border':'#2a2a4a','--text':'#e0e0e0','--text-dim':'#888','--accent':'#22c55e','--danger':'#ef4444','--warn':'#eab308','--info':'#3b82f6'},light:{'--bg':'#f8f9fa','--panel':'#ffffff','--surface':'#e9ecef','--border':'#dee2e6','--text':'#212529','--text-dim':'#6c757d','--accent':'#198754','--danger':'#dc3545','--warn':'#ffc107','--info':'#0d6efd'}};
+  var v=pr[p]||pr.dark;for(var k in v)document.documentElement.style.setProperty(k,v[k]);lte();
+}
+function resetTheme(){themePreset('dark');toast('Theme reset (save to persist)')}
+
+// ═══════════════════════ Terminals ═══════════════════════
+async function ltm(){
+  var c=document.getElementById('term-cards');c.innerHTML='<p class="es">Loading...</p>';
+  try{
+    var r=await fetch('/api/terminals');if(!r.ok)throw new Error('offline');
+    var d=await r.json();var ts=d.terminals||[];
+    if(!ts.length){c.innerHTML='<div class="es"><div class="ei">📡</div><p>No terminals</p></div>';return}
+    c.innerHTML=ts.map(function(t){var isD=t.id==='default';
+      return'<div class="ic"><span class="ii">'+(t.type==='physical'?'🖥️':'📱')+'</span><div class="if"><div class="it">'+esc(t.name)+(isD?' <span style="font-size:.6rem;color:var(--accent)">default</span>':'')+'</div><div class="im">Grid: '+esc(t.grid)+' · Widgets: '+(t.widget_count||0)+' · Created: '+(t.created_at||'?').slice(0,10)+'</div><div class="tf" onclick="copyToken(\''+esc(t.token)+'\')" title="Click to copy">🔑 '+esc(t.token||'')+'</div></div><div class="ia"><button class="btn btn-sm" onclick="renTerm(\''+esc(t.id)+'\',\''+esc(t.name)+'\')">✏️ Rename</button><select class="btn btn-sm" onchange="chGrid(\''+esc(t.id)+'\',this.value)" style="font-size:.65rem"><option value="">Grid</option>'+['2x3','3x4','3x5','4x8'].map(function(g){return'<option'+(g===t.grid?' selected':'')+'>'+g+'</option>'}).join('')+'</select>'+(isD?'':'<button class="btn btn-sm btn-dg" onclick="delTerm(\''+esc(t.id)+'\',\''+esc(t.name)+'\')">🗑 Delete</button>')+'</div></div>';
+    }).join('');
+  }catch(e){c.innerHTML='<div class="es"><p style="color:var(--danger)">Failed to load</p></div>'}
+}
+function copyToken(tk){navigator.clipboard.writeText(tk).then(function(){toast('Token copied')})}
+async function renTerm(id,old){var n=prompt('New name:',old);if(!n||n===old)return;
+  try{var r=await fetch('/api/terminals/'+id+'/rename',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})});if(!r.ok){var e=await r.json();throw new Error(e.error)}toast('Renamed to '+n);ltm()}catch(e){toast(e.message,'er')}}
+async function delTerm(id,n){if(!confirm('Delete "'+n+'"?'))return;
+  try{var r=await fetch('/api/terminals/'+id,{method:'DELETE'});if(!r.ok){var e=await r.json();throw new Error(e.error)}toast('Deleted');ltm()}catch(e){toast(e.message,'er')}}
+async function chGrid(id,g){if(!g)return;
+  try{var r=await fetch('/api/terminals/'+id+'/grid',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({grid:g})});if(!r.ok){var e=await r.json();throw new Error(e.error)}toast('Grid updated');ltm()}catch(e){toast(e.message,'er')}}
+function showWizard(){window.location.hash='wizard'}
+
+// ═══════════════════════ Layouts ═══════════════════════
+async function lly(){
+  var c=document.getElementById('lay-cards');c.innerHTML='<p class="es">Loading...</p>';
+  try{
+    var r=await fetch('/api/layouts');if(!r.ok)throw new Error('offline');
+    var d=await r.json();var ls=d.layouts||[];
+    if(!ls.length){c.innerHTML='<div class="es"><div class="ei">📐</div><p>No saved layouts</p></div>';return}
+    c.innerHTML=ls.map(function(l){return'<div class="ic"><span class="ii">📐</span><div class="if"><div class="it">'+esc(l.name)+'</div><div class="im">'+esc(l.path)+'</div></div><div class="ia"><button class="btn btn-sm" onclick="loadLay(\''+esc(l.name)+'\')">📂 Load</button><button class="btn btn-sm" onclick="renLay(\''+esc(l.name)+'\')">✏️ Rename</button><button class="btn btn-sm" onclick="expLay(\''+esc(l.name)+'\')">📥 Export</button><button class="btn btn-sm btn-dg" onclick="delLay(\''+esc(l.name)+'\')">🗑 Delete</button></div></div>'}).join('');
+  }catch(e){c.innerHTML='<div class="es"><p style="color:var(--danger)">Failed</p></div>'}
+}
+async function loadLay(n){try{await fetch('/api/layouts/load',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,terminal_id:'default'})});toast('Layout loaded')}catch(e){toast('Load failed','er')}}
+async function delLay(n){if(!confirm('Delete "'+n+'"?'))return;try{var r=await fetch('/api/layouts/'+n,{method:'DELETE'});if(!r.ok){var e=await r.json();throw new Error(e.error)}toast('Deleted');lly()}catch(e){toast(e.message,'er')}}
+async function renLay(o){var n=prompt('New name:',o);if(!n||n===o)return;try{var r=await fetch('/api/layouts/'+o+'/rename',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({new_name:n})});if(!r.ok){var e=await r.json();throw new Error(e.error)}toast('Renamed');lly()}catch(e){toast(e.message,'er')}}
+function expLay(n){var a=document.createElement('a');a.href='/static/../api/layouts/'+n+'/file';a.download=n+'.yaml';document.body.appendChild(a);a.click();document.body.removeChild(a)}
+function importLayout(){document.getElementById('lay-file').click()}
+async function handleLayoutImport(e){var f=e.target.files[0];if(!f)return;try{var t=await f.text();var n=f.name.replace(/\.ya?ml$/,'');await fetch('/api/layouts/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,terminal_id:'default'})});toast('Imported (full upload coming soon)');lly()}catch(e){toast('Import failed: '+e.message,'er')}e.target.value=''}
+
+// ═══════════════════════ Adapters ═══════════════════════
+async function lad(){
+  var c=document.getElementById('adap-cards');c.innerHTML='<p class="es">Loading...</p>';
+  try{
+    var r=await fetch('/api/adapters');if(!r.ok)throw new Error('offline');
+    var d=await r.json();var as=d.adapters||[];
+    if(!as.length){c.innerHTML='<div class="es"><div class="ei">🔌</div><p>No adapters</p></div>';return}
+    c.innerHTML=as.map(function(a){return'<div class="ic"><span class="sd '+(a.enabled?'on':'ia')+'" style="flex-shrink:0"></span><div class="if"><div class="it">'+esc(a.name)+'</div><div class="im">'+esc(a.class||'?')+' · '+esc(a.module||'')+'</div></div><div class="ia"><label class="tg"><input type="checkbox" '+(a.enabled?'checked':'')+' onchange="togAd(\''+esc(a.name)+'\',this.checked)"><span class="tgs"></span></label><button class="btn btn-sm" onclick="show(\'appearance\');selAd(\''+esc(a.name)+'\')">🎨 Appearance</button></div></div>'}).join('');
+  }catch(e){c.innerHTML='<div class="es"><p style="color:var(--danger)">Failed</p></div>'}
+}
+async function togAd(n,en){try{await fetch('/api/adapters/'+n+'/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:en})});toast(n+' '+(en?'enabled':'disabled'))}catch(e){toast('Toggle failed','er')}}
+function addAgentPattern(){var n=prompt('Agent name (e.g. claude-code):');if(!n)return;var p=prompt('Process name (e.g. claude):');if(!p)return;var a=prompt('Args contains (comma-sep, optional):');toast('Pattern added (persist coming soon)')}
+
+// ═══════════════════════ About ═══════════════════════
+function lab(){document.getElementById('about-info').innerHTML='<div class="fg"><span class="fl">Version</span><span>v0.1-dev</span></div><div class="fg"><span class="fl">Home</span><span style="font-family:monospace;font-size:.7rem">~/.vibe-deck/</span></div><div class="fg"><span class="fl">API URL</span><span>http://localhost:9734</span></div><div class="fg"><span class="fl">SSE</span><span>/api/events</span></div>'}
+</script>
+</body>
+</html>

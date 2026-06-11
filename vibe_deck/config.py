@@ -15,6 +15,8 @@ from typing import Any
 
 import yaml
 
+CONFIG_SCHEMA_VERSION = 1
+
 VIBEDECK_HOME = Path.home() / ".vibe-deck"
 CONFIG_FILE = VIBEDECK_HOME / "config.yaml"
 AGENTS_DIR = VIBEDECK_HOME / "agents"
@@ -61,6 +63,62 @@ class MCPServerConfig:
             command=d["command"] if isinstance(d["command"], list) else [d["command"]],
             args=d.get("args", []),
         )
+
+
+@dataclass
+class TimingConfig:
+    """Timing parameters for frame scheduling and activity detection."""
+
+    thinking_timeout_ms: int = 800
+    activity_window_ms: int = 3000
+    fast_frame_interval_ms: int = 33
+    slow_frame_interval_ms: int = 1000
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "TimingConfig":
+        return cls(
+            thinking_timeout_ms=d.get("thinking_timeout_ms", 800),
+            activity_window_ms=d.get("activity_window_ms", 3000),
+            fast_frame_interval_ms=d.get("fast_frame_interval_ms", 33),
+            slow_frame_interval_ms=d.get("slow_frame_interval_ms", 1000),
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "thinking_timeout_ms": self.thinking_timeout_ms,
+            "activity_window_ms": self.activity_window_ms,
+            "fast_frame_interval_ms": self.fast_frame_interval_ms,
+            "slow_frame_interval_ms": self.slow_frame_interval_ms,
+        }
+
+
+@dataclass
+class AdapterConfig:
+    """Configuration for a registered adapter (e.g. streamdeck, websocket, midi)."""
+
+    name: str
+    enabled: bool = True
+    config: dict = field(default_factory=dict)
+
+    # Per-event appearance overrides: event_name -> {icon,color,animation,label,min_display_ms}
+    appearance: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "AdapterConfig":
+        return cls(
+            name=d["name"],
+            enabled=d.get("enabled", True),
+            config=d.get("config", {}),
+            appearance=d.get("appearance", {}),
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "enabled": self.enabled,
+            "config": self.config,
+            "appearance": self.appearance,
+        }
 
 
 @dataclass
@@ -122,10 +180,13 @@ class VibeDeckConfig:
     port: int = DEFAULT_PORT
     render: str = DEFAULT_RENDER  # "sim" or "hardware"
     device_index: int = 0
+    expose: bool = False  # bind to 0.0.0.0 instead of localhost
     autodetect: bool = True
     agent_patterns: list[AgentPattern] = field(default_factory=list)
     mcp_servers: list[MCPServerConfig] = field(default_factory=list)
     terminals: list[TerminalInfo] = field(default_factory=list)
+    timing: TimingConfig = field(default_factory=TimingConfig)
+    adapter_configs: list[AdapterConfig] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "VibeDeckConfig":
@@ -133,6 +194,7 @@ class VibeDeckConfig:
             port=d.get("port", DEFAULT_PORT),
             render=d.get("render", DEFAULT_RENDER),
             device_index=d.get("device_index", 0),
+            expose=d.get("expose", False),
             autodetect=d.get("autodetect", True),
             agent_patterns=[
                 AgentPattern.from_dict(p) for p in d.get("agent_patterns", [])
@@ -142,6 +204,10 @@ class VibeDeckConfig:
             ],
             terminals=[
                 TerminalInfo.from_dict(t) for t in d.get("terminals", [])
+            ],
+            timing=TimingConfig.from_dict(d.get("timing", {})),
+            adapter_configs=[
+                AdapterConfig.from_dict(a) for a in d.get("adapter_configs", [])
             ],
         )
 
@@ -199,9 +265,11 @@ def save_config(config: VibeDeckConfig, path: Path | None = None) -> None:
 
     # Convert to dict manually (dataclasses.asdict would work but is less explicit)
     d = {
+        "schema_version": CONFIG_SCHEMA_VERSION,
         "port": config.port,
         "render": config.render,
         "device_index": config.device_index,
+        "expose": config.expose,
         "autodetect": config.autodetect,
         "agent_patterns": [
             {
@@ -217,6 +285,8 @@ def save_config(config: VibeDeckConfig, path: Path | None = None) -> None:
             for s in config.mcp_servers
         ],
         "terminals": [t.to_dict() for t in config.terminals],
+        "timing": config.timing.to_dict(),
+        "adapter_configs": [a.to_dict() for a in config.adapter_configs],
     }
 
     with open(config_path, "w", encoding="utf-8") as f:
