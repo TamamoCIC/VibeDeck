@@ -26,6 +26,7 @@ STATUS_TO_DISPLAY = {
     "running": {"icon": "🦞", "color": "#22c55e", "animation": "crawl", "label": "Running"},
     "idle": {"icon": "🦞", "color": "#166534", "animation": "none", "label": "Idle"},
     "error": {"icon": "🔴", "color": "#ef4444", "animation": "blink", "label": "Error"},
+    "crashed": {"icon": "⚠️", "color": "#ef4444", "animation": "blink", "label": "Error"},
     "approval": {"icon": "🟡", "color": "#eab308", "animation": "blink", "label": "Approve"},
     "offline": {"icon": "⚫", "color": "#374151", "animation": "none", "label": "Offline"},
 }
@@ -69,6 +70,7 @@ class OpenClawAdapter:
 
         import websockets
         backoff = 1
+        consecutive_failures = 0
         while self._running:
             try:
                 async with websockets.connect(self.url) as ws:
@@ -76,14 +78,21 @@ class OpenClawAdapter:
                     # Connect handshake
                     await self._send(ws, "connect", {"auth": {"token": self._token} if self._token else {}})
                     backoff = 1
+                    consecutive_failures = 0  # reset on successful connection
 
                     async for raw in ws:
                         if not self._running:
                             break
                         await self._handle_message(raw)
             except Exception as e:
+                consecutive_failures += 1
+                if consecutive_failures >= 5:
+                    log.warning("OpenClaw Gateway persistent failure (%d attempts): %s",
+                                consecutive_failures, e)
+                    self._status = "error"
+                else:
+                    self._status = "offline"
                 log.debug("OpenClaw Gateway disconnected: %s. Reconnecting in %ds...", e, backoff)
-                self._status = "offline"
                 await self._publish()
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30)

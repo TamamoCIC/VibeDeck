@@ -260,6 +260,38 @@ def cmd_serve(args):
             expose=getattr(args, 'expose', False),
             no_physical=getattr(args, 'no_physical', False),
         ))
+    except RuntimeError as e:
+        # Port-in-use → try to shutdown the old daemon and restart
+        msg = str(e)
+        if "already in use" in msg:
+            import urllib.request
+            print(f"⚠ Port {args.port} in use — asking old daemon to shut down...")
+            try:
+                urllib.request.urlopen(
+                    urllib.request.Request(
+                        f"http://localhost:{args.port}/api/shutdown",
+                        method="POST",
+                    ),
+                    timeout=3,
+                )
+                print("   Old daemon stopped. Waiting 2s for port release...")
+                import time
+                time.sleep(2)
+                # Retry once
+                asyncio.run(run_supervisor(
+                    port=args.port,
+                    render=args.render,
+                    device_index=args.device,
+                    autodetect=not args.no_autodetect,
+                    expose=getattr(args, 'expose', False),
+                    no_physical=getattr(args, 'no_physical', False),
+                ))
+                return
+            except Exception:
+                pass
+        print(f"\n❌ {msg}")
+        import sys
+        sys.exit(1)
     except KeyboardInterrupt:
         print("\n👋 VibeDeck stopped.")
 

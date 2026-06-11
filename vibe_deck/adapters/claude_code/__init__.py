@@ -42,6 +42,7 @@ _BUILTIN_STATUS_TO_DISPLAY: dict[str, dict[str, str]] = {
     "thinking":         {"icon": "🐙", "color": "#7c3aed", "animation": "pulse",  "label": "Thinking", "sprite": "test_bounce"},
     "writing":          {"icon": "🐙", "color": "#3b82f6", "animation": "pulse",  "label": "Writing", "sprite": "test_bounce"},
     "error":            {"icon": "🔴", "color": "#ef4444", "animation": "blink",  "label": "Error"},
+    "crashed":          {"icon": "⚠️", "color": "#ef4444", "animation": "blink",  "label": "Error"},
     "offline":          {"icon": "⚫", "color": "#374151", "animation": "none",   "label": "Offline"},
 }
 

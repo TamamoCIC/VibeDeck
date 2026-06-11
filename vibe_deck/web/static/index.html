@@ -563,6 +563,17 @@
       <div class="insp-label">Meta</div>
       <pre id="inspMeta" style="font-size:0.6rem;color:var(--text-dim);max-height:120px;overflow-y:auto;background:var(--bg);padding:6px;border-radius:4px">—</pre>
     </div>
+    <div class="insp-row" style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">
+      <button class="btn-sm" style="width:100%;color:var(--info);border-color:var(--info);margin-bottom:6px"
+              onclick="focusAgentWindow()" title="Toggle agent window — focus / restore previous">
+        🎯 Toggle Agent Window
+      </button>
+      <button class="btn-sm" style="width:100%;color:var(--warn);border-color:var(--warn)"
+              onclick="removeFromGrid()" title="Remove from this terminal, keep in pool">
+        ↩ Remove from Grid
+      </button>
+      <div style="font-size:0.6rem;color:var(--text-dim);margin-top:4px">Widget stays in pool for later use</div>
+    </div>
   </div>
 </aside>
 
@@ -641,6 +652,63 @@ function toast(msg, type='success') {
     el.classList.add('out');
     el.addEventListener('animationend', () => el.remove());
   }, 2200);
+}
+
+// ═══════════════════════════════════════════════════
+// Resilient fetch wrapper — catches network errors,
+// retries once for transient failures, shows toasts.
+// ═══════════════════════════════════════════════════
+let _apiOfflineToastShown = false;
+const _API_RETRYABLE = [
+  'ConnectionError', 'NetworkError', 'TypeError',
+  'AbortError', 'TimeoutError',
+  'socket connection was closed',
+  'Failed to fetch',
+  'Network request failed',
+  'network error',
+];
+
+function _isRetryable(err) {
+  const msg = String(err.message || err).toLowerCase();
+  return _API_RETRYABLE.some(p => msg.includes(p.toLowerCase()));
+}
+
+async function api(url, opts = {}) {
+  const { method = 'GET', body, headers, silent = false, retries = 1 } = opts;
+  const fetchOpts = { method, headers: headers || {} };
+  if (body) {
+    fetchOpts.headers['Content-Type'] = 'application/json';
+    fetchOpts.body = JSON.stringify(body);
+  }
+
+  let lastErr;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const resp = await fetch(url, fetchOpts);
+      if (!resp.ok && !silent) {
+        // Server errors — don't retry, just report
+        if (resp.status >= 500) {
+          toast('Server error (' + resp.status + ') — daemon may be overloaded', 'error');
+        }
+      }
+      _apiOfflineToastShown = false;  // reset on success
+      return resp;
+    } catch (err) {
+      lastErr = err;
+      if (attempt < retries && _isRetryable(err)) {
+        // Brief backoff before retry
+        await new Promise(r => setTimeout(r, 800 * (attempt + 1)));
+        continue;
+      }
+    }
+  }
+
+  // All retries exhausted — show toast once per offline period
+  if (!silent && !_apiOfflineToastShown) {
+    _apiOfflineToastShown = true;
+    toast('⚠️ Network error — daemon may be offline. Retrying...', 'error');
+  }
+  throw lastErr;
 }
 
 // ═══════════════════════════════════════════════════
@@ -855,7 +923,7 @@ function renderLogs() {
 async function loadTerminalList() {
   const el = document.getElementById('terminalList');
   try {
-    const resp = await fetch('/api/terminals');
+    const resp = await api('/api/terminals', {silent:true});
     if (!resp.ok) { el.innerHTML = '<p style="color:var(--text-dim);font-size:0.68rem">Daemon offline</p>'; return; }
     const data = await resp.json();
     const terminals = data.terminals || [];
@@ -965,7 +1033,7 @@ function connectSSE() {
 // ═══════════════════════════════════════════════════
 function pressKey(i) {
   const token = getToken();
-  fetch('/api/key/' + i + '?token=' + token, { method: 'POST' }).catch(() => {});
+  api('/api/key/' + i + '?token=' + token, { method: 'POST', silent: true }).catch(() => {});
 }
 
 // ═══════════════════════════════════════════════════
@@ -1042,9 +1110,9 @@ async function doRegister() {
   btn.disabled = true; btn.textContent = 'Connecting...'; err.textContent = '';
 
   try {
-    const resp = await fetch('/api/terminal/register', {
-      method: 'POST', headers: { 'Content-Type':'application/json' },
-      body: JSON.stringify({ name, grid: selectedGrid, type:'virtual' }),
+    const resp = await api('/api/terminal/register', {
+      method: 'POST',
+      body: { name, grid: selectedGrid, type:'virtual' },
     });
     const data = await resp.json();
     if (resp.ok && data.terminal) {
@@ -1113,6 +1181,7 @@ function renderPool(widgets) {
           (window._terminalList || []).map(t => '<option value="' + esc(t.id) + '">' + esc(t.name || t.id) + '</option>').join('') +
           '</select>'
         : '') +
+      '<button class="pool-btn" onclick="event.stopPropagation();deleteWidget(\'' + esc(w.id) + '\')" title="Delete from pool" style="color:var(--danger);border-color:transparent;margin-left:2px">🗑</button>' +
       '</span>' +
     '</div>';
   }).join('');
@@ -1121,7 +1190,7 @@ function renderPool(widgets) {
 // Load pool once at startup (before SSE connects), then SSE keeps it live
 async function loadPoolOnce() {
   try {
-    const resp = await fetch('/api/pool');
+    const resp = await api('/api/pool', {silent:true});
     if (resp.ok) {
       const data = await resp.json();
       renderPool(data.pool || []);
@@ -1132,9 +1201,9 @@ async function loadPoolOnce() {
 async function activateOnTerminal(widgetId, terminalId) {
   if (!widgetId || !terminalId) return;
   try {
-    const resp = await fetch('/api/pool/activate', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ widget_id: widgetId, terminal_id: terminalId }),
+    const resp = await api('/api/pool/activate', {
+      method: 'POST',
+      body: { widget_id: widgetId, terminal_id: terminalId },
     });
     const data = await resp.json();
     if (resp.ok) {
@@ -1143,15 +1212,15 @@ async function activateOnTerminal(widgetId, terminalId) {
       toast(data.error || 'Activation failed', 'error');
     }
   } catch(e) {
-    toast('Activation failed', 'error');
+    toast('Activation failed — network error', 'error');
   }
 }
 
 async function deactivateWidget(widgetId, terminalId) {
   try {
-    const resp = await fetch('/api/pool/deactivate', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ widget_id: widgetId, terminal_id: terminalId }),
+    const resp = await api('/api/pool/deactivate', {
+      method: 'POST',
+      body: { widget_id: widgetId, terminal_id: terminalId },
     });
     if (resp.ok) {
       toast('Widget removed from ' + (terminalId === 'default' ? 'Web' : terminalId));
@@ -1159,9 +1228,74 @@ async function deactivateWidget(widgetId, terminalId) {
   } catch(e) { toast('Deactivation failed', 'error'); }
 }
 
+async function deleteWidget(widgetId) {
+  if (!confirm('Delete "' + widgetId + '" from pool?\n\nIt will re-register if the agent is still alive.')) return;
+  try {
+    const resp = await api('/api/pool/' + encodeURIComponent(widgetId), { method: 'DELETE' });
+    if (resp.ok) {
+      toast('Widget deleted from pool');
+      loadPoolOnce();
+    } else {
+      const text = await resp.text().catch(() => '');
+      console.error('[deleteWidget] HTTP ' + resp.status + ': ' + text);
+      toast('Delete failed (HTTP ' + resp.status + ')', 'error');
+    }
+  } catch(e) {
+    console.error('[deleteWidget]', e);
+    toast('Delete failed — network error', 'error');
+  }
+}
+
+async function focusAgentWindow() {
+  if (!selectedWidgetId) { console.warn('[focusAgentWindow] no widget selected'); return; }
+  const url = '/api/widget/' + encodeURIComponent(selectedWidgetId) + '/focus';
+  console.log('[focusAgentWindow] POST', url);
+  try {
+    const resp = await api(url, { method: 'POST' });
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data.action === 'focused') {
+        toast('🎯 ' + (data.title || 'Agent focused') + ' — press again to restore');
+      } else if (data.action === 'restored') {
+        toast('↩ Restored: ' + (data.title || 'previous window'));
+      } else if (data.action === 'minimised') {
+        toast('⬇ Agent minimised');
+      } else if (data.action === 'flashing') {
+        toast('💡 ' + (data.message || 'Taskbar flashing — click the window'), 'error');
+      }
+    } else {
+      const text = await resp.text().catch(() => '');
+      console.error('[focusAgentWindow] HTTP ' + resp.status + ': ' + text);
+      toast('Toggle failed (HTTP ' + resp.status + ')', 'error');
+    }
+  } catch(e) {
+    console.error('[focusAgentWindow]', e);
+    toast('Toggle failed — network error', 'error');
+  }
+}
+
+async function removeFromGrid() {
+  if (!selectedWidgetId || selectedKeyIndex == null) return;
+  const widgetId = selectedWidgetId;
+  const terminalId = currentTerminalId || 'default';
+  try {
+    const resp = await api('/api/pool/deactivate', {
+      method: 'POST',
+      body: { widget_id: widgetId, terminal_id: terminalId },
+    });
+    if (resp.ok) {
+      toast('Removed from grid — still in pool');
+      deselectWidget();  // close inspector
+    } else {
+      const data = await resp.json().catch(() => ({}));
+      toast(data.error || 'Remove failed', 'error');
+    }
+  } catch(e) { toast('Remove failed — network error', 'error'); }
+}
+
 async function getTerminals() {
   try {
-    const resp = await fetch('/api/terminals');
+    const resp = await api('/api/terminals', {silent:true});
     const data = await resp.json();
     return data.terminals || [];
   } catch(e) { return null; }
@@ -1200,9 +1334,9 @@ function setupDropTargets() {
       if (!widgetId || keyIndex == null) return;
 
       try {
-        const resp = await fetch('/api/pool/activate', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ widget_id: widgetId, terminal_id: currentTerminalId, key_index: keyIndex }),
+        const resp = await api('/api/pool/activate', {
+          method: 'POST',
+          body: { widget_id: widgetId, terminal_id: currentTerminalId, key_index: keyIndex },
         });
         const data = await resp.json();
         if (resp.ok) {
@@ -1231,7 +1365,7 @@ async function init() {
     return;
   }
   try {
-    const resp = await fetch('/api/terminal/status?token=' + token);
+    const resp = await api('/api/terminal/status?token=' + token, {silent:true});
     if (resp.ok) {
       const data = await resp.json();
       showApp(data.terminal.grid, data.terminal.name);
@@ -1294,13 +1428,13 @@ function toggleBezel() {
 async function shutdownDaemon() {
   if (!confirm('Shut down the VibeDeck daemon?')) return;
   try {
-    await fetch('/api/shutdown', { method: 'POST' });
+    await api('/api/shutdown', { method: 'POST' });
     toast('Shutting down...');
     setTimeout(() => {
       document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:var(--bg);color:var(--text-dim);font-size:1.2rem">🦞 VibeDeck stopped.<br><br><small>Close this tab.</small></div>';
     }, 500);
   } catch(e) {
-    toast('Shutdown failed', 'error');
+    toast('Shutdown failed — network error', 'error');
   }
 }
 
@@ -1334,7 +1468,7 @@ async function showVisualConfig() {
   const body = document.getElementById('visualBody');
   body.innerHTML = '<p class="dim">Loading...</p>';
   try {
-    const resp = await fetch('/api/appearance');
+    const resp = await api('/api/appearance');
     const data = await resp.json();
     if (!data.events) throw new Error('no events');
     body.innerHTML = Object.keys(data.events).sort().map(name => {
@@ -1360,10 +1494,10 @@ async function saveAppearance() {
     events[ev][el.dataset.f] = el.value;
   });
   try {
-    await fetch('/api/appearance', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({events}) });
+    await api('/api/appearance', { method:'POST', body:{events} });
     closeModal('visualModal');
     toast('Appearance saved');
-  } catch(e) { toast('Save failed', 'error'); }
+  } catch(e) { toast('Save failed — network error', 'error'); }
 }
 
 // ═══════════════════════════════════════════════════
@@ -1394,11 +1528,11 @@ async function saveTheme() {
   document.querySelectorAll('#themeBody input[type=text]').forEach(txt => { css += '  '+txt.dataset.txt+': '+txt.value+';\n'; });
   css += '}';
   try {
-    await fetch('/api/theme', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({css}) });
+    await api('/api/theme', { method:'POST', body:{css} });
     document.querySelectorAll('#themeBody input[type=text]').forEach(txt => { document.documentElement.style.setProperty(txt.dataset.txt, txt.value); });
     closeModal('themeModal');
     toast('Theme saved');
-  } catch(e) { toast('Save failed', 'error'); }
+  } catch(e) { toast('Save failed — network error', 'error'); }
 }
 
 // ═══════════════════════════════════════════════════
@@ -1408,10 +1542,10 @@ function showSaveDialog() { document.getElementById('saveModal').style.display =
 async function saveLayout() {
   const name = document.getElementById('saveName').value.trim(); if (!name) return;
   try {
-    await fetch('/api/layouts/save', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, terminal_id:'default'}) });
+    await api('/api/layouts/save', { method:'POST', body:{name, terminal_id:'default'} });
     closeModal('saveModal');
     toast('Layout “' + name + '” saved');
-  } catch(e) { toast('Save failed', 'error'); }
+  } catch(e) { toast('Save failed — network error', 'error'); }
 }
 
 async function showLoadDialog() {
@@ -1419,7 +1553,7 @@ async function showLoadDialog() {
   const list = document.getElementById('loadList');
   list.innerHTML = '<p class="dim">Loading...</p>';
   try {
-    const resp = await fetch('/api/layouts');
+    const resp = await api('/api/layouts');
     const data = await resp.json();
     const layouts = data.layouts || [];
     list.innerHTML = layouts.length === 0 ? '<p class="dim">No saved layouts</p>' :
@@ -1432,10 +1566,10 @@ async function showLoadDialog() {
 
 async function loadLayoutByName(name) {
   try {
-    await fetch('/api/layouts/load', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, terminal_id:'default'}) });
+    await api('/api/layouts/load', { method:'POST', body:{name, terminal_id:'default'} });
     closeModal('loadModal');
     toast('Layout “' + name + '” loaded');
-  } catch(e) { toast('Load failed', 'error'); }
+  } catch(e) { toast('Load failed — network error', 'error'); }
 }
 </script>
 </body>

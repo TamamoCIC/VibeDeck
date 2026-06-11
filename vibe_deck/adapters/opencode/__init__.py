@@ -26,6 +26,7 @@ STATUS_TO_DISPLAY = {
     "running": {"icon": "🦊", "color": "#22c55e", "animation": "crawl", "label": "Running"},
     "idle": {"icon": "🦊", "color": "#166534", "animation": "none", "label": "Idle"},
     "error": {"icon": "🔴", "color": "#ef4444", "animation": "blink", "label": "Error"},
+    "crashed": {"icon": "⚠️", "color": "#ef4444", "animation": "blink", "label": "Error"},
     "approval": {"icon": "🟡", "color": "#eab308", "animation": "blink", "label": "Approve"},
     "offline": {"icon": "⚫", "color": "#374151", "animation": "none", "label": "Offline"},
 }
@@ -60,12 +61,14 @@ class OpenCodeAdapter:
 
         import aiohttp
         backoff = 1
+        consecutive_failures = 0
         while self._running:
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(f"{self.url}/event") as resp:
                         log.info("OpenCode SSE connected")
                         backoff = 1
+                        consecutive_failures = 0  # reset on successful connection
                         async for line in resp.content:
                             if not self._running:
                                 break
@@ -73,15 +76,29 @@ class OpenCodeAdapter:
                             if text.startswith("data: "):
                                 await self._handle_event(text[6:])
             except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                log.debug("OpenCode SSE disconnected: %s. Reconnecting in %ds...", e, backoff)
-                self._status = "offline"
+                consecutive_failures += 1
+                # After ~5 consecutive failures (~62s cumulative), show
+                # "error" to signal a persistent network problem rather
+                # than a brief disconnect.
+                if consecutive_failures >= 5:
+                    log.warning("OpenCode SSE persistent failure (%d attempts): %s",
+                                consecutive_failures, e)
+                    self._status = "error"
+                else:
+                    self._status = "offline"
                 await self._publish()
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30)
             except asyncio.CancelledError:
                 break
             except Exception:
+                consecutive_failures += 1
                 log.exception("OpenCode SSE error")
+                if consecutive_failures >= 5:
+                    self._status = "error"
+                else:
+                    self._status = "offline"
+                await self._publish()
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30)
 

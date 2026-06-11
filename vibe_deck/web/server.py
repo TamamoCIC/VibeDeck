@@ -88,6 +88,9 @@ class VibeDeckWebServer:
         self._app.router.add_get("/api/pool", self._pool_list)
         self._app.router.add_post("/api/pool/activate", self._pool_activate_handler)
         self._app.router.add_post("/api/pool/deactivate", self._pool_deactivate_handler)
+        self._app.router.add_route("DELETE", "/api/pool/{widget_id}", self._pool_delete_handler)
+        # Focus agent window
+        self._app.router.add_post("/api/widget/{widget_id}/focus", self._widget_focus_handler)
         # Animation clips
         self._app.router.add_get("/api/clips", self._list_clips)
         # Shutdown
@@ -133,7 +136,16 @@ class VibeDeckWebServer:
         await self._runner.setup()
         host = "0.0.0.0" if self._expose else "localhost"
         site = web.TCPSite(self._runner, host, self._port)
-        await site.start()
+        try:
+            await site.start()
+        except OSError as e:
+            raise RuntimeError(
+                f"Port {self._port} is already in use — another VibeDeck "
+                f"instance may still be running.\n"
+                f"  • Close the other terminal window, or\n"
+                f"  • Run: curl -X POST http://localhost:{self._port}/api/shutdown\n"
+                f"  • Or try: vibe-deck serve --port {self._port + 1}"
+            ) from e
         log.info("Web server started at http://%s:%d (expose=%s)", host, self._port, self._expose)
 
     def close_sse_connections(self) -> None:
@@ -691,6 +703,88 @@ class VibeDeckWebServer:
         self._engine.pool_deactivate(widget_id, terminal_id)
         log.info("Pool widget %r deactivated from terminal %r", widget_id, terminal_id)
         return web.json_response({"status": "ok"})
+
+    async def _pool_delete_handler(self, request: web.Request) -> web.Response:
+        """Delete a widget from the pool entirely.
+
+        The widget is removed from the pool and from all terminals it was
+        placed on.  If the agent process is still alive it will be
+        re-registered automatically on the next scan cycle.
+        """
+        widget_id = request.match_info.get("widget_id", "")
+        if not widget_id:
+            return web.json_response({"error": "widget_id is required"}, status=400)
+
+        log.info("[API] DELETE /api/pool/%s — removing from pool and all terminals", widget_id)
+
+        try:
+            # Remove from all terminals first, then push updated frames
+            for tid in self._engine.list_terminals():
+                self._engine.remove_widget(widget_id, tid)
+                await self.broadcast_frame(tid)
+
+            # Remove from pool
+            self._engine.pool_remove(widget_id)
+
+            log.info("Pool widget %r deleted (will re-register if agent is still alive)", widget_id)
+            return web.json_response({"status": "ok", "widget_id": widget_id})
+        except Exception:
+            log.exception("Failed to delete pool widget %r", widget_id)
+            return web.json_response({"error": "internal error"}, status=500)
+
+    async def _widget_focus_handler(self, request: web.Request) -> web.Response:
+        """Focus the agent's program window (bring to foreground by PID)."""
+        widget_id = request.match_info.get("widget_id", "")
+        log.info("[API] POST /api/widget/%s/focus", widget_id)
+
+        if not widget_id:
+            return web.json_response({"error": "widget_id is required"}, status=400)
+
+        # Search all terminals for the widget's PID
+        pid = 0
+        for tid in self._engine.list_terminals():
+            frame = self._engine.get_frame(tid)
+            if frame is None:
+                continue
+            ws = frame.widgets.get(widget_id)
+            if ws is not None:
+                pid = ws.meta.get("pid", 0)
+                break
+
+        # Fallback: check the pool
+        if not pid:
+            pool_ws = self._engine.pool_get(widget_id)
+            if pool_ws:
+                pid = pool_ws.meta.get("pid", 0)
+
+        # Last resort: extract PID from widget_id (format: "agent-name-12345")
+        if not pid:
+            import re as _re
+            _m = _re.search(r"-(\d+)$", widget_id)
+            if _m:
+                pid = int(_m.group(1))
+                log.info("[API] focus: extracted pid=%d from widget_id %r", pid, widget_id)
+
+        if not pid:
+            log.warning("[API] focus: no PID found for widget %r", widget_id)
+            return web.json_response(
+                {"error": f"no PID found for widget {widget_id!r}"},
+                status=404,
+            )
+
+        from ..core.window_focus import toggle_window_by_pid
+        result = toggle_window_by_pid(pid)
+        log.info("[API] focus toggle: pid=%d → %s", pid, result.get("action"))
+
+        if result.get("action") == "error":
+            return web.json_response({
+                "error": result.get("message", "focus failed"),
+            }, status=404)
+
+        return web.json_response({
+            "status": "ok",
+            **result,
+        })
 
     # ── Shutdown ──────────────────────────────────
 

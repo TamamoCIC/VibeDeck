@@ -344,17 +344,43 @@ class VibeDeckSupervisor:
             agent_name = msg.payload.get("agent_name", "unknown")
             pid = msg.payload.get("pid", 0)
             widget_id = msg.payload.get("widget_id", f"{agent_name}-{pid}")
-            # Update pool widget to offline
-            pool_ws = self._engine.pool_get(widget_id)
-            if pool_ws:
-                pool_ws.update_display(icon="⚫", color="#374151", animation="none", label="Offline")
-                self._engine.pool_add(pool_ws)
-            # Update terminal placements (same as before)
+
+            # ── Crash detection ────────────────────────────
+            # If the process exited while still in an active state
+            # (Running, Thinking, Writing, Tool, etc.), it likely
+            # crashed due to a network error or unhandled exception.
+            # Clean exits (Stop hook, SessionEnd) transition to
+            # "Idle" first, so they won't match here.
+            _ACTIVE_LABELS = {
+                "Running", "Thinking", "Writing", "Tool",
+                "Starting", "Compact", "Waiting", "Approve",
+                "Asking...", "Approval?",
+            }
+            _was_active = False
             frame = self._engine.get_frame(terminal_id)
-            if frame:
-                existing = frame.widgets.get(widget_id)
-                if existing:
-                    existing.update_display(icon="⚫", color="#374151", animation="none", label="Offline")
+            existing_term = frame.widgets.get(widget_id) if frame else None
+            if existing_term and existing_term.display.label in _ACTIVE_LABELS:
+                _was_active = True
+            pool_ws = self._engine.pool_get(widget_id)
+            if pool_ws and pool_ws.display.label in _ACTIVE_LABELS:
+                _was_active = True
+
+            if _was_active:
+                log.warning("[AGENT] %s (pid=%d) exited unexpectedly while active → Error",
+                           agent_name, pid)
+                crash_display = {"icon": "⚠️", "color": "#ef4444", "animation": "blink", "label": "Error"}
+                if pool_ws:
+                    pool_ws.update_display(**crash_display)
+                    self._engine.pool_add(pool_ws)
+                if existing_term:
+                    existing_term.update_display(**crash_display)
+            else:
+                # Clean exit — normal offline transition
+                if pool_ws:
+                    pool_ws.update_display(icon="⚫", color="#374151", animation="none", label="Offline")
+                    self._engine.pool_add(pool_ws)
+                if existing_term:
+                    existing_term.update_display(icon="⚫", color="#374151", animation="none", label="Offline")
 
         elif msg.type == MessageType.WIDGET_STATE_UPDATE:
             agent_name = msg.payload.get("agent_name", "unknown")
