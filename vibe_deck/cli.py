@@ -396,31 +396,10 @@ def _get_status_data() -> dict:
 def _find_agent_ancestor_pid() -> int:
     """Walk up the process tree looking for a known agent process.
 
-    Starts from the current process and checks each ancestor against a
-    set of known agent process names (claude, opencode, etc.).  Returns
-    the first matching PID, or the current PID if no agent ancestor is
-    found.
+    Delegates to :func:`vibe_deck.platform.find_agent_ancestor_pid`.
     """
-    try:
-        import psutil
-    except ImportError:
-        return os.getpid()
-
-    KNOWN_AGENTS = {"claude", "claude.exe", "opencode", "openclaw"}
-
-    try:
-        proc = psutil.Process(os.getpid())
-        for _ in range(10):  # max depth to avoid infinite loops
-            name = proc.name() or ""
-            if any(agent in name.lower() for agent in KNOWN_AGENTS):
-                return proc.pid
-            proc = proc.parent()
-            if proc is None:
-                break
-    except (psutil.NoSuchProcess, psutil.AccessDenied):
-        pass
-
-    return os.getpid()
+    from vibe_deck.platform import find_agent_ancestor_pid
+    return find_agent_ancestor_pid()
 
 
 def cmd_whoami(args):

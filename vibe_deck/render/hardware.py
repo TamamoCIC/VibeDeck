@@ -82,13 +82,8 @@ def get_phone_template(grid: str) -> str | None:
 
 def _default_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     """Get a font at the given size. Falls back to default."""
-    font_paths = [
-        "C:\\Windows\\Fonts\\consola.ttf",
-        "C:\\Windows\\Fonts\\segoeui.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/System/Library/Fonts/Helvetica.ttc",
-    ]
-    for fp in font_paths:
+    from vibe_deck.platform import font_paths as _platform_font_paths
+    for fp in _platform_font_paths():
         try:
             return ImageFont.truetype(fp, size)
         except (IOError, OSError):

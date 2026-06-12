@@ -772,7 +772,7 @@ class VibeDeckWebServer:
                 status=404,
             )
 
-        from ..core.window_focus import toggle_window_by_pid
+        from ..platform import toggle_window_by_pid
         import asyncio
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, toggle_window_by_pid, pid)

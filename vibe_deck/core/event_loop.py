@@ -402,7 +402,7 @@ class VibeDeckSupervisor:
                 _pid_match = _re_hwnd.search(r"-(\d+)$", widget_id)
                 if _pid_match:
                     _agent_pid = int(_pid_match.group(1))
-                    from .window_focus import register_hwnd
+                    from ..platform import register_hwnd
                     register_hwnd(_agent_pid, int(_console_hwnd))
 
             # Use display from adapter if provided, else resolve from event data
