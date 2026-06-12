@@ -145,6 +145,43 @@ if _IS_WINDOWS:
     FLASHW_TRAY = 0x00000002
     FLASHW_TIMERNOFG = 0x0000000C  # flash until foreground
 
+    # ── Missing argtypes for foreground strategies ─────
+    _user32.AllowSetForegroundWindow.argtypes = [wintypes.DWORD]
+    _user32.AllowSetForegroundWindow.restype = wintypes.BOOL
+
+    _user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND,
+                                     ctypes.c_int, ctypes.c_int,
+                                     ctypes.c_int, ctypes.c_int,
+                                     wintypes.UINT]
+    _user32.SetWindowPos.restype = wintypes.BOOL
+
+    _user32.SwitchToThisWindow.argtypes = [wintypes.HWND, wintypes.BOOL]
+    _user32.SwitchToThisWindow.restype = None  # void
+
+    _user32.keybd_event.argtypes = [wintypes.BYTE, wintypes.BYTE,
+                                    wintypes.DWORD, ctypes.c_void_p]
+    _user32.keybd_event.restype = None  # void
+
+    _user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+    _user32.SetForegroundWindow.restype = wintypes.BOOL
+
+    _user32.LockSetForegroundWindow.argtypes = [wintypes.UINT]
+    _user32.LockSetForegroundWindow.restype = wintypes.BOOL
+
+    # SetWindowPos constants
+    HWND_TOPMOST = -1
+    HWND_NOTOPMOST = -2
+    SWP_NOMOVE = 0x0002
+    SWP_NOSIZE = 0x0001
+    SWP_SHOWWINDOW = 0x0040
+
+    # Foreground lock constants
+    LSFW_LOCK = 1
+    LSFW_UNLOCK = 2
+
+    # Virtual key code
+    VK_MENU = 0x12  # Alt key
+
 
 # ── Terminal window class whitelist ──────────────────
 # Only windows with these class names are considered real terminal
@@ -350,7 +387,7 @@ def _ensure_message_queue() -> None:
 
 
 def _try_alt_spoof(hwnd: int) -> bool:
-    """Single shot of Alt-spoofing.  Returns True if focus succeeded."""
+    """Alt-spoofing via SendInput (scan codes)."""
     _ensure_message_queue()
     sent_down = _user32.SendInput(1, ctypes.byref(_ALT_DOWN), _SENDINPUT_SIZEOF)
     _kernel32.Sleep(1)
@@ -358,8 +395,39 @@ def _try_alt_spoof(hwnd: int) -> bool:
         result = _user32.SetForegroundWindow(hwnd)
     finally:
         sent_up = _user32.SendInput(1, ctypes.byref(_ALT_UP), _SENDINPUT_SIZEOF)
-    log.debug("_try_alt_spoof hwnd=%s send_down=%s sfw=%s send_up=%s",
-              hwnd, sent_down, result, sent_up)
+    log.info("_try_alt_spoof(sc) hwnd=%d send_down=%d sfw=%d send_up=%d",
+             hwnd, sent_down, result, sent_up)
+    return bool(result)
+
+
+def _try_alt_spoof_vk(hwnd: int) -> bool:
+    """Alt-spoofing via keybd_event (virtual key codes).
+
+    ``keybd_event`` is an older API that may bypass UIPI restrictions
+    that block ``SendInput`` on very recent Windows 11 builds.
+    """
+    _ensure_message_queue()
+    _user32.keybd_event(VK_MENU, 0, 0, 0)               # Alt down
+    _kernel32.Sleep(1)
+    try:
+        result = _user32.SetForegroundWindow(hwnd)
+    finally:
+        _user32.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)  # Alt up
+    log.info("_try_alt_spoof(vk) hwnd=%d sfw=%d", hwnd, result)
+    return bool(result)
+
+
+def _try_topmost_trick(hwnd: int) -> bool:
+    """Briefly set TOPMOST then remove it — can jolt the window into
+    foreground on some Windows 11 builds."""
+    _user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)
+    _user32.SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE)
+    # Follow up with SetForegroundWindow — topmost jolt may have
+    # weakened the foreground lock.
+    result = _user32.SetForegroundWindow(hwnd)
+    log.info("_try_topmost_trick hwnd=%d sfw=%d", hwnd, result)
     return bool(result)
 
 
@@ -367,7 +435,9 @@ def _try_attach_thread(hwnd: int) -> bool:
     """Try to activate *hwnd* via AttachThreadInput.
 
     Attaches the calling thread to the foreground window's thread,
-    which grants temporary foreground-activation rights.
+    which grants temporary foreground-activation rights.  Also uses
+    ``AllowSetForegroundWindow(ASFW_ANY)`` and the TOPMOST trick
+    to maximise the chance of success on Windows 11.
     """
     fg_hwnd = _user32.GetForegroundWindow()
     if not fg_hwnd or fg_hwnd == hwnd:
@@ -381,27 +451,53 @@ def _try_attach_thread(hwnd: int) -> bool:
 
     attached = _user32.AttachThreadInput(my_tid, fg_tid, True)
     if not attached:
-        log.debug("_try_attach_thread: AttachThreadInput failed (tid=%d→%d)",
-                  my_tid, fg_tid)
+        log.info("_try_attach_thread: AttachThreadInput failed (tid=%d→%d)",
+                 my_tid, fg_tid)
         return False
     try:
-        _user32.BringWindowToTop(hwnd)
+        # ASFW_ANY = 0xFFFFFFFF: allow any process to set foreground
+        _user32.AllowSetForegroundWindow(0xFFFFFFFF)
+        # Unlock foreground lock (no-op if not locked, but harmless)
+        _user32.LockSetForegroundWindow(LSFW_UNLOCK)
+        # Restore and bring to top
         _user32.ShowWindow(hwnd, SW_RESTORE)
+        _user32.BringWindowToTop(hwnd)
+        # TOPMOST jolt while attached to foreground thread
+        _user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                             SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)
+        _user32.SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+                             SWP_NOMOVE | SWP_NOSIZE)
         result = _user32.SetForegroundWindow(hwnd)
         return bool(result)
     finally:
         _user32.AttachThreadInput(my_tid, fg_tid, False)
 
 
+def _try_switch_direct(hwnd: int) -> bool:
+    """Use ``SwitchToThisWindow`` as a standalone strategy.
+
+    This simulates Alt+Tab and can work even when ``SetForegroundWindow``
+    is blocked by UIPI or foreground-lock policies.
+    """
+    _user32.ShowWindow(hwnd, SW_RESTORE)
+    _user32.SwitchToThisWindow(hwnd, True)
+    _kernel32.Sleep(50)  # allow the switch to settle
+    result = (_user32.GetForegroundWindow() == hwnd)
+    log.info("_try_switch_direct hwnd=%d ok=%d", hwnd, result)
+    return result
+
+
 def _bring_to_foreground(hwnd: int) -> bool:
     """Bring *hwnd* to the foreground with retry and graceful degradation.
 
-    Strategy cascade:
-      1. Alt-spoofing (instant — normal operation).
-      2. AttachThreadInput + BringWindowToTop (thread-level focus steal).
-      3. Wait 400 ms, retry Alt-spoofing (post-unlock — foreground lock
-         is briefly absent after a session unlock).
-      4. Flash taskbar + SwitchToThisWindow (persistent UIPI block).
+    Strategy cascade (ordered by success rate on Windows 11):
+      1. SwitchToThisWindow (simulates Alt+Tab — most reliable on Win11).
+      2. Alt-spoof via keybd_event (bypasses SendInput restrictions).
+      3. AttachThreadInput + TOPMOST jolt + AllowSetForegroundWindow.
+      4. Alt-spoof via SendInput (traditional approach).
+      5. TOPMOST jolt standalone.
+      6. Wait 400 ms, retry after foreground-lock cooldown.
+      7. Flash taskbar (last resort).
     """
     title = _window_title(hwnd)
 
@@ -409,31 +505,50 @@ def _bring_to_foreground(hwnd: int) -> bool:
     if _is_window_minimized(hwnd):
         _user32.ShowWindow(hwnd, SW_RESTORE)
 
-    # ── Strategy 1: Alt-spoofing ─────────────────────
-    if _try_alt_spoof(hwnd):
-        log.info("_bring_to_foreground [alt-spoof-1] hwnd=%s title=%r ✓", hwnd, title)
+    # ── Strategy 1: SwitchToThisWindow (Alt+Tab sim) ──
+    if _try_switch_direct(hwnd):
+        log.info("_bring_to_foreground [switch-direct] hwnd=%d title=%r ✓", hwnd, title)
         return True
+    log.info("_bring_to_foreground [switch-direct] hwnd=%d ✗", hwnd)
 
-    log.info("_bring_to_foreground [alt-spoof-1] hwnd=%s title=%r ✗ — will retry", hwnd, title)
+    # ── Strategy 2: Alt-spoof via keybd_event ──────────
+    if _try_alt_spoof_vk(hwnd):
+        log.info("_bring_to_foreground [alt-spoof-vk] hwnd=%d title=%r ✓", hwnd, title)
+        return True
+    log.info("_bring_to_foreground [alt-spoof-vk] hwnd=%d ✗", hwnd)
 
-    # ── Strategy 2: AttachThreadInput ────────────────
+    # ── Strategy 3: AttachThreadInput + TOPMOST ──────
     if _try_attach_thread(hwnd):
-        log.info("_bring_to_foreground [attach-thread] hwnd=%s ✓", hwnd)
+        log.info("_bring_to_foreground [attach-thread] hwnd=%d ✓", hwnd)
         return True
+    log.info("_bring_to_foreground [attach-thread] hwnd=%d ✗", hwnd)
 
-    log.debug("_bring_to_foreground [attach-thread] hwnd=%s ✗", hwnd)
-
-    # ── Strategy 3: Retry after foreground-lock reset ─
-    _kernel32.Sleep(400)
+    # ── Strategy 4: Alt-spoof via SendInput ──────────
     if _try_alt_spoof(hwnd):
-        log.info("_bring_to_foreground [alt-spoof-2] hwnd=%s ✓", hwnd)
+        log.info("_bring_to_foreground [alt-spoof-sc] hwnd=%d title=%r ✓", hwnd, title)
         return True
-    # Also try bare SetForegroundWindow — post-unlock it might just work
-    if _user32.SetForegroundWindow(hwnd):
-        log.info("_bring_to_foreground [bare-sfw] hwnd=%s ✓", hwnd)
-        return True
+    log.info("_bring_to_foreground [alt-spoof-sc] hwnd=%d ✗", hwnd)
 
-    # ── Strategy 4: Flash + SwitchToThisWindow ────────
+    # ── Strategy 5: TOPMOST jolt standalone ──────────
+    if _try_topmost_trick(hwnd):
+        log.info("_bring_to_foreground [topmost-jolt] hwnd=%d ✓", hwnd)
+        return True
+    log.info("_bring_to_foreground [topmost-jolt] hwnd=%d ✗", hwnd)
+
+    # ── Strategy 6: Retry after foreground-lock reset ─
+    _kernel32.Sleep(400)
+    if _try_switch_direct(hwnd):
+        log.info("_bring_to_foreground [switch-direct-2] hwnd=%d ✓", hwnd)
+        return True
+    if _try_alt_spoof_vk(hwnd):
+        log.info("_bring_to_foreground [alt-spoof-vk-2] hwnd=%d ✓", hwnd)
+        return True
+    if _user32.SetForegroundWindow(hwnd):
+        log.info("_bring_to_foreground [bare-sfw] hwnd=%d ✓", hwnd)
+        return True
+    log.info("_bring_to_foreground [post-cooldown] hwnd=%d ✗", hwnd)
+
+    # ── Strategy 7: Flash taskbar (last resort) ─────
     fw = FLASHWINFO()
     fw.cbSize = ctypes.sizeof(FLASHWINFO)
     fw.hwnd = hwnd
@@ -442,11 +557,12 @@ def _bring_to_foreground(hwnd: int) -> bool:
     fw.dwTimeout = 0
     _user32.FlashWindowEx(ctypes.byref(fw))
 
+    # Try one last SwitchToThisWindow after flashing
     try:
         _user32.ShowWindow(hwnd, SW_RESTORE)
         _user32.SwitchToThisWindow(hwnd, True)
         if _user32.GetForegroundWindow() == hwnd:
-            log.info("_bring_to_foreground [switch] hwnd=%s ✓", hwnd)
+            log.info("_bring_to_foreground [switch-flash] hwnd=%d ✓", hwnd)
             return True
     except Exception:
         pass
@@ -528,23 +644,26 @@ def toggle_window_by_pid(pid: int) -> dict:
     chain = _ancestor_pids(pid)
     log.info("Toggle: pid=%d full_chain=%s", pid, chain)
 
+    # ── Build search chain (strip VibeDeck's own ancestry) ──
+    import os as _os
+    _own_pid = _os.getpid()
+    _cut = len(chain)
+    for _i, _p in enumerate(chain):
+        if _p == _own_pid:
+            _cut = _i  # stop before VibeDeck's own PID
+            break
+    search_chain = chain[:_cut] if _cut < len(chain) else chain
+    if len(search_chain) < len(chain):
+        log.info("Toggle: stripped VibeDeck ancestry — search_chain=%s", search_chain)
+
     # ── Try cached HWND first ─────────────────────
     agent_hwnd = _get_cached_hwnd(pid)
+    used_cache = False
     if agent_hwnd:
+        used_cache = True
         log.info("Toggle: using cached hwnd=%d for pid=%d", agent_hwnd, pid)
-    else:
-        # ── Strip VibeDeck's own ancestry ──────────────────
-        import os as _os
-        _own_pid = _os.getpid()
-        _cut = len(chain)
-        for _i, _p in enumerate(chain):
-            if _p == _own_pid:
-                _cut = _i  # stop before VibeDeck's own PID
-                break
-        search_chain = chain[:_cut] if _cut < len(chain) else chain
-        if len(search_chain) < len(chain):
-            log.info("Toggle: stripped VibeDeck ancestry — search_chain=%s", search_chain)
 
+    if agent_hwnd is None:
         agent_hwnd = _find_window(search_chain)
         if agent_hwnd:
             _hwnd_cache[pid] = agent_hwnd
@@ -562,6 +681,19 @@ def toggle_window_by_pid(pid: int) -> dict:
         # ── Agent not in front → save current, focus agent ──
         _saved_foreground[pid] = current_fg
         ok = _bring_to_foreground(agent_hwnd)
+        if not ok and used_cache:
+            # Cached hwnd may be stale (e.g. early binding found a
+            # transient window).  Clear the cache, re-find, and retry.
+            log.warning("Toggle: focus failed with cached hwnd=%d — retrying with fresh find",
+                        agent_hwnd)
+            clear_hwnd_cache(pid)
+            agent_hwnd = _find_window(search_chain)
+            if agent_hwnd:
+                _hwnd_cache[pid] = agent_hwnd
+                agent_title = _window_title(agent_hwnd)
+                log.info("Toggle: re-found hwnd=%d title=%r — retrying focus",
+                         agent_hwnd, agent_title)
+                ok = _bring_to_foreground(agent_hwnd)
         if not ok:
             # Focus failed — clear state, taskbar is already flashing
             _saved_foreground.pop(pid, None)
