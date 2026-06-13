@@ -287,7 +287,12 @@ class VibeDeckSupervisor:
                     await self._web_server.broadcast_frame(terminal_id, frame, debug_info)
                     if self._render == "hardware" and hasattr(self, '_renderer'):
                         if hasattr(self._renderer, 'render_frame'):
-                            self._renderer.render_frame(frame)
+                            # Only push the physical terminal to hardware;
+                            # virtual terminals are web-only.
+                            t_info = self._registry.get_by_id(terminal_id) if self._registry else None
+                            is_physical = t_info and t_info.type == "physical"
+                            if is_physical:
+                                self._renderer.render_frame(frame)
                 await asyncio.sleep(interval)
         except asyncio.CancelledError:
             pass
@@ -562,7 +567,7 @@ class VibeDeckSupervisor:
             log.info("[KEY] Key %d pressed on terminal %r", key, terminal_id)
             frame = self._engine.get_frame(terminal_id)
             if frame:
-                ws = frame.widget_at_key(key)
+                ws = frame.get_widget_at(key)
                 if ws:
                     log.info("[KEY] Widget %s at key %d — current state: icon=%s label=%s",
                              ws.id, key, ws.display.icon, ws.display.label)
