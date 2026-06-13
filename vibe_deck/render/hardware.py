@@ -80,10 +80,21 @@ def get_phone_template(grid: str) -> str | None:
 # ── Font & text helpers ──────────────────────────
 
 
-def _default_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    """Get a font at the given size. Falls back to default."""
+def _load_font(size: int, prefer_emoji: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    """Load a font at the given size.
+
+    When *prefer_emoji* is True, emoji-capable fonts (seguiemj.ttf) are
+    tried first so icons like 🐙 render as real glyphs instead of "?".
+    """
     from vibe_deck.platform import font_paths as _platform_font_paths
-    for fp in _platform_font_paths():
+
+    _paths = list(_platform_font_paths())
+    if not prefer_emoji:
+        # Move emoji font to the end for labels — emoji glyphs are too
+        # large relative to text and make labels look unbalanced.
+        _paths.sort(key=lambda p: "emoj" in p.lower())  # emoji last
+
+    for fp in _paths:
         try:
             return ImageFont.truetype(fp, size)
         except (IOError, OSError):
@@ -263,7 +274,7 @@ class HardwareRenderer:
         if not is_sprite and display.icon:
             icon = display.icon
             icon_font_size = min(w, h) // 3
-            icon_font = _default_font(icon_font_size)
+            icon_font = _load_font(icon_font_size, prefer_emoji=True)
             try:
                 icon_bbox = draw.textbbox((0, 0), icon, font=icon_font)
             except Exception:
@@ -280,7 +291,7 @@ class HardwareRenderer:
         # ── Step 3: Label at bottom ────────────
         if display.label:
             label_font_size = max(10, min(w // 8, 16))
-            label_font = _default_font(label_font_size)
+            label_font = _load_font(label_font_size, prefer_emoji=False)
             lines = _split_text(display.label)
             y_offset = h - (len(lines) * (label_font_size + 2)) - 3
             for line in lines:
@@ -290,10 +301,15 @@ class HardwareRenderer:
                     l_bbox = (0, 0, label_font_size * len(line), label_font_size)
                 l_w = l_bbox[2] - l_bbox[0]
                 l_x = (w - l_w) // 2
-                # Dark background bar for readability
+                # Semi-transparent background bar for readability.
+                # Half the key width so it sits behind text only.
+                bar_h = label_font_size + 4
+                bar_w = l_w + 8
+                bar_x = (w - bar_w) // 2
+                bar_y = y_offset - 2
                 try:
                     draw.rectangle(
-                        [l_x - 2, y_offset, l_x + l_w + 2, y_offset + label_font_size + 2],
+                        [bar_x, bar_y, bar_x + bar_w, bar_y + bar_h],
                         fill=(0, 0, 0),
                     )
                 except Exception:

@@ -774,6 +774,7 @@ class WindowsBackend:
     @staticmethod
     def font_paths() -> list[str]:
         return [
+            "C:\\Windows\\Fonts\\seguiemj.ttf",   # emoji (🐙⚫ etc.)
             "C:\\Windows\\Fonts\\consola.ttf",
             "C:\\Windows\\Fonts\\segoeui.ttf",
         ]
