@@ -225,6 +225,7 @@ class HardwareRenderer:
 
     # ── Key Image Rendering ───────────────────────
 
+    @staticmethod
     def _draw_icon_shape(
         draw: ImageDraw.ImageDraw, icon: str, w: int, h: int
     ) -> None:
@@ -369,7 +370,7 @@ class HardwareRenderer:
         # PIL can't render color emoji (Segoe UI Emoji only exposes
         # monochrome outlines), so we draw clean PIL vector shapes.
         if not is_sprite and display.icon:
-            _draw_icon_shape(draw, display.icon, w, h)
+            self._draw_icon_shape(draw, display.icon, w, h)
 
         # ── Step 3: Label at bottom ────────────
         if display.label:
