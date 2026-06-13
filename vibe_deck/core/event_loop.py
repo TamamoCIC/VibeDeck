@@ -214,6 +214,25 @@ class VibeDeckSupervisor:
             )
             if self._renderer.open():
                 log.info("Hardware renderer started: %s (%s)", self._renderer.deck_type, self._renderer.grid_name)
+
+                # Register key callback → route physical key presses to message bus.
+                # The Stream Deck library calls this from a background thread,
+                # so we must use run_coroutine_threadsafe to post to the event loop.
+                _loop = asyncio.get_running_loop()
+
+                def _on_key(key_index: int, pressed: bool) -> None:
+                    tid = self._engine.list_terminals()[0] if self._engine.list_terminals() else "default"
+                    asyncio.run_coroutine_threadsafe(
+                        self._bus.publish(Message(
+                            type=MessageType.KEY_PRESSED,
+                            source="hardware",
+                            payload={"key": key_index, "pressed": pressed, "terminal_id": tid},
+                        )),
+                        _loop,
+                    )
+
+                self._renderer.set_key_callback(_on_key)
+
                 # Hot-plug monitor
                 self._tasks.append(asyncio.create_task(self._renderer.hotplug_loop()))
             else:
