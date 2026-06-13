@@ -348,6 +348,16 @@ class HardwareRenderer:
         size = self.key_size
         now = _time_mod.monotonic()
 
+        # Read native image format from the device.
+        # Stream Deck XL returns {'format':'JPEG','flip':(True,True),'size':(96,96)}
+        fmt_info: dict = (
+            self._deck.key_image_format()
+            if hasattr(self._deck, "key_image_format")
+            else {}
+        )
+        want_format = fmt_info.get("format", "").upper()
+        flip_h, flip_v = fmt_info.get("flip", (False, False))
+
         for i, widget_id in enumerate(frame.keymap):
             if i >= self.key_count:
                 break
@@ -368,14 +378,20 @@ class HardwareRenderer:
             if img.size != size:
                 img = img.resize(size, Image.LANCZOS)
 
-            # Push raw bytes to hardware.
-            # Note: key_image_format() returns a dict in newer streamdeck
-            # lib versions, not an object with .convert().  set_key_image
-            # handles format conversion internally.
-            try:
-                self._deck.set_key_image(i, img.tobytes())
-            except Exception:
-                pass
+            # Apply flips — some models (XL) need both axes flipped
+            if flip_h:
+                img = img.transpose(Image.FLIP_LEFT_RIGHT)
+            if flip_v:
+                img = img.transpose(Image.FLIP_TOP_BOTTOM)
+
+            # Convert to expected format and push
+            if want_format == "JPEG":
+                buf = BytesIO()
+                img.save(buf, format="JPEG", quality=94)
+                data = buf.getvalue()
+            else:
+                data = img.tobytes()
+            self._deck.set_key_image(i, data)
 
     def set_brightness(self, percent: int) -> None:
         """Set panel brightness (0-100)."""
