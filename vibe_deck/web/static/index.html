@@ -413,10 +413,10 @@
     </div>
   </div>
 
-  <!-- Terminals -->
+  <!-- Endpoints -->
   <div class="sec" id="secTerminals">
     <div class="sec-hdr" onclick="toggleSec('secTerminals')">
-      <span class="arrow">▼</span> 📡 Terminals
+      <span class="arrow">▼</span> 📡 Endpoints
     </div>
     <div class="sec-body" id="terminalList"></div>
   </div>
@@ -446,7 +446,7 @@
         </label>
       </div>
       <hr style="border-color:var(--border);margin:8px 0">
-      <button class="btn-sm" style="width:100%;margin-top:4px" onclick="showWizard()">＋ New Virtual Terminal</button>
+      <button class="btn-sm" style="width:100%;margin-top:4px" onclick="showWizard()">＋ New Endpoint</button>
       <button class="btn-sm" style="width:100%;margin-top:4px" onclick="shutdownDaemon()">⏻ Shutdown Daemon</button>
     </div>
   </div>
@@ -623,7 +623,7 @@
       <div class="grid-option" data-grid="3x5" onclick="selectGrid(this)"><div class="go-size">3×5</div><div class="go-label">Standard</div><div class="go-keys">15 keys</div></div>
       <div class="grid-option selected" data-grid="4x8" onclick="selectGrid(this)"><div class="go-size">4×8</div><div class="go-label">Dense</div><div class="go-keys">32 keys</div></div>
     </div>
-    <input class="wizard-input" id="wizardName" type="text" placeholder="Device name (optional)" maxlength="20">
+    <input class="wizard-input" id="wizardName" type="text" placeholder="DefaultEndpoint" maxlength="20">
     <button class="wizard-btn" id="wizardBtn" onclick="doRegister()">Connect</button>
     <div class="wizard-error" id="wizardError"></div>
     <div id="wizardBackRow" style="display:none;margin-top:12px">
@@ -936,9 +936,11 @@ async function loadTerminalList() {
     el.innerHTML = terminals.map(t => {
       const active = (t.token && t.token === currentToken) ? ' active' : '';
       const dotCls = t.widget_count > 0 ? 'active-dot' : 'idle-dot';
-      const label = t.id === 'default' ? (getToken() ? 'Web Viewer' : t.name) : t.name;
-      return '<div class="term-item' + active + '" onclick="switchToTerminal(\'' + esc(t.token||'') + '\',\'' + esc(t.grid) + '\',\'' + esc(t.name) + '\',\'' + esc(t.id) + '\')" title="' + esc(label) + '">' +
+      const label = t.name;
+      const typeIcon = t.type === 'physical' ? '🔌' : '🌐';
+      return '<div class="term-item' + active + '" onclick="switchToTerminal(\'' + esc(t.token||'') + '\',\'' + esc(t.grid) + '\',\'' + esc(t.name) + '\',\'' + esc(t.id) + '\')" title="' + esc(t.name) + ' (' + esc(t.type) + ')">' +
         '<span class="term-dot ' + dotCls + '"></span>' +
+        '<span class="term-type-icon" title="' + esc(t.type) + '">' + typeIcon + '</span>' +
         '<span class="term-name">' + esc(label) + '</span>' +
         '<span class="term-grid">' + esc(t.grid) + '</span>' +
       '</div>';
@@ -977,12 +979,15 @@ function connectSSE() {
   const statusDot = document.getElementById('statusDot');
   const statusLabel = document.getElementById('statusLabel');
   const token = getToken();
+  console.log('[SSE] connecting with token ' + (token ? token.slice(0,8)+'...' : '(none)'));
   const es = new EventSource('/api/events?token=' + token);
   window._sse = es;  // store for clean disconnect on terminal switch
   let connected = false;
+  let errorCount = 0;
 
   es.onopen = () => {
-    connected = true; sseRetryDelay = 1000;
+    connected = true; errorCount = 0; sseRetryDelay = 1000;
+    console.log('[SSE] connected');
     statusDot.className = 'status-dot online';
     statusLabel.textContent = 'Live';
     statusLabel.style.color = 'var(--accent)';
@@ -995,15 +1000,13 @@ function connectSSE() {
       const data = JSON.parse(event.data);
       if (data.type === 'frame') {
         window._lastKeys = data.keys;
-        // Cache meta from the frame if available
         if (data._meta) window._widgetMeta = data._meta;
         updateKeys(data.keys);
-        if (data._pool) renderPool(data._pool);  // real-time pool from SSE
+        if (data._pool) renderPool(data._pool);
         statusDot.className = 'status-dot online';
         statusLabel.textContent = 'Live';
         statusLabel.style.color = 'var(--accent)';
         document.getElementById('headerName').textContent = data.display_name || '';
-        // Debug overlay: real-time timing diagnostics (hook age / thinking / fps)
         if (data._debug && data._debug.hook_age_ms != null) {
           const d = data._debug;
           const ageS = (d.hook_age_ms / 1000).toFixed(1);
@@ -1016,14 +1019,22 @@ function connectSSE() {
   };
 
   es.onerror = () => {
+    errorCount++;
+    console.warn('[SSE] error #' + errorCount + ' (connected=' + connected + ', readyState=' + es.readyState + ')');
     if (connected) {
       statusDot.className = 'status-dot offline';
       statusLabel.textContent = 'Disconnected'; statusLabel.style.color = 'var(--danger)';
       connected = false;
+    } else if (errorCount >= 3) {
+      // After 3 consecutive failures, show error status
+      statusDot.className = 'status-dot offline';
+      statusLabel.textContent = 'Connection failed'; statusLabel.style.color = 'var(--danger)';
     }
     es.close();
     window._sse = null;
-    setTimeout(connectSSE, Math.min(sseRetryDelay, 30000));
+    const delay = Math.min(sseRetryDelay, 30000);
+    console.log('[SSE] will retry in ' + delay + 'ms');
+    setTimeout(connectSSE, delay);
     sseRetryDelay *= 2;
   };
 }
@@ -1104,7 +1115,7 @@ function hideWizard() {
 async function doRegister() {
   const btn = document.getElementById('wizardBtn');
   const err = document.getElementById('wizardError');
-  const name = document.getElementById('wizardName').value.trim() || 'My Terminal';
+  const name = document.getElementById('wizardName').value.trim() || 'DefaultEndpoint';
   const existingToken = getToken();
   const isAddingFromApp = !!existingToken;
   btn.disabled = true; btn.textContent = 'Connecting...'; err.textContent = '';
@@ -1116,6 +1127,9 @@ async function doRegister() {
     });
     const data = await resp.json();
     if (resp.ok && data.terminal) {
+      // Close wizard NOW — direct DOM, not via hash routing
+      document.getElementById('wizard-view').style.display = 'none';
+      document.getElementById('app').style.display = '';
       if (isAddingFromApp) { hideWizard(); }
       else { saveToken(data.terminal.token); showApp(data.terminal.grid, data.terminal.name); }
     } else { err.textContent = data.error || 'Registration failed'; }
@@ -1341,7 +1355,7 @@ function setupDropTargets() {
         const data = await resp.json();
         if (resp.ok) {
           toast('Widget placed at key ' + keyIndex);
-          loadPool();
+          loadPoolOnce();
         } else {
           toast(data.error || 'Placement failed', 'error');
         }
@@ -1370,6 +1384,9 @@ async function init() {
       const data = await resp.json();
       showApp(data.terminal.grid, data.terminal.name);
     } else {
+      // Token no longer valid (endpoint deleted) — clear and re-register
+      console.warn('[init] token invalid (' + resp.status + '), clearing saved token');
+      localStorage.removeItem('vibedeck_token');
       document.getElementById('wizard-view').style.display = '';
     }
   } catch(e) {

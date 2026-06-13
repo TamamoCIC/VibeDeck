@@ -190,19 +190,28 @@ class VibeDeckSupervisor:
         log.info("Connectors started (scanner + file watcher)")
 
     async def _start_renderer(self) -> None:
-        """Start the appropriate transport target."""
-        if self._no_physical:
-            log.info("Physical terminal disabled (--no-physical)")
-            self._render = "sim"
+        """Start transports — HID (if hardware detected) and SSE (always).
 
-        if self._render == "hardware":
+        ADR 0003 (Endpoint / Renderer / Binding):
+        The Stream Deck is a **Physical Renderer** that binds to an
+        Endpoint (default: ``"default"``).  The Endpoint keeps its
+        identity — the hardware just mirrors its frames via HID while
+        the Virtual Renderer mirrors them via SSE.
+
+        Hardware detection runs automatically unless ``--no-physical``
+        is set.
+        """
+        if self._no_physical:
+            log.info("Physical Renderer disabled (--no-physical)")
+        else:
             from ..transport.hid import HIDTransport
 
             # Thread-safe key callback → message bus bridge
             _loop = asyncio.get_running_loop()
+            _bound_endpoint_cell: list[str | None] = [None]
 
             def _on_key(key_index: int, pressed: bool) -> None:
-                tid = self._engine.list_terminals()[0] if self._engine.list_terminals() else "default"
+                tid = _bound_endpoint_cell[0] or "default"
                 asyncio.run_coroutine_threadsafe(
                     self._bus.publish(Message(
                         type=MessageType.KEY_PRESSED,
@@ -217,33 +226,70 @@ class VibeDeckSupervisor:
                 key_callback=_on_key,
             )
             if self._hid.open():
-                log.info("HID transport started: %s (%d keys)",
+                log.info("HID Physical Renderer started: %s (%d keys)",
                          self._hid.deck_type, self._hid.key_count)
 
-                # Sync hardware identity → terminal registry
                 deck_type = self._hid.deck_type
-                grid = self._hid.key_count
+                key_count = self._hid.key_count
+
+                # Derive grid from known mappings
+                _grid_map = {
+                    32: "4x8", 15: "3x5", 6: "3x2", 8: "2x4", 3: "1x3",
+                }
+                hw_grid_str = _grid_map.get(key_count, f"{key_count // 4}x4")
+
+                # ── Bind Physical Renderer to an Endpoint ──
+                # ADR 0003: the Stream Deck is a renderer, not a separate
+                # Endpoint.  We bind it to "default" (MVP auto-bind).
+                # Future: user prompt to choose/create an Endpoint.
                 if self._registry:
-                    phys = self._registry.get_by_id("default")
-                    if phys and phys.type == "physical":
-                        phys.name = deck_type
-                        phys.grid = f"{grid // 8}x{8 if grid >= 32 else 5}" if grid >= 15 else f"{3}x{grid // 3}"
-                        # Derive actual grid from known mappings
-                        _grid_map = {
-                            32: "4x8", 15: "3x5", 6: "3x2", 8: "2x4", 3: "1x3",
-                        }
-                        phys.grid = _grid_map.get(grid, f"{grid // 4}x4")
+                    endpoint = self._registry.get_by_id("default")
+                    if endpoint is None:
+                        # No default Endpoint — create one
+                        endpoint = self._registry.register(
+                            name=deck_type,
+                            terminal_type="virtual",
+                            grid=hw_grid_str,
+                            layout=f"{deck_type.lower().replace(' ', '-')}.yaml",
+                        )
+                        endpoint.id = "default"
                         self._registry.save()
-                        log.info("Terminal 'default' → %r (%s)", deck_type, phys.grid)
+                        log.info("Created default Endpoint %r (%s)", deck_type, hw_grid_str)
+
+                    # ── Grid compatibility check ──
+                    ep_rows, ep_cols = _parse_grid(endpoint.grid)
+                    hw_rows, hw_cols = _parse_grid(hw_grid_str)
+                    if ep_rows > hw_rows or ep_cols > hw_cols:
+                        log.warning(
+                            "Endpoint %r grid %s exceeds hardware %s — "
+                            "rendering will be clipped",
+                            endpoint.id, endpoint.grid, hw_grid_str,
+                        )
+                    elif endpoint.grid != hw_grid_str:
+                        log.info(
+                            "Endpoint %r grid %s differs from hardware %s",
+                            endpoint.id, endpoint.grid, hw_grid_str,
+                        )
+
+                    # Bind: activate Physical Renderer on this Endpoint
+                    endpoint.type = "physical"
+                    endpoint.name = deck_type  # reflect hardware identity
+                    endpoint.grid = hw_grid_str
+                    self._registry.save()
+                    _bound_endpoint_cell[0] = endpoint.id
+                    log.info("Bound Physical Renderer to Endpoint %r (%s)",
+                             endpoint.id, deck_type)
+
+                    # Sync into LayoutEngine
+                    hw_rows, hw_cols = _parse_grid(hw_grid_str)
+                    self._engine.register_terminal(endpoint.id, hw_rows, hw_cols, endpoint.name)
 
                 # Hot-plug monitor
                 self._tasks.append(asyncio.create_task(self._hid.hotplug_loop()))
             else:
-                log.warning("HID transport failed to open. Falling back to sim-only.")
-                self._render = "sim"
+                log.info("No Stream Deck detected — Virtual Renderer only")
 
-        if self._render == "sim":
-            log.info("Web transport ready (PILRenderer → SSE)")
+        log.info("Virtual Renderer ready (PILRenderer → SSE)")
 
     async def _frame_push_loop(self) -> None:
         """Adaptive frame-rate push loop.
@@ -298,11 +344,12 @@ class VibeDeckSupervisor:
                         debug_info=debug_info,
                     )
 
-                    # 3. HID: StandardFrame → Stream Deck (physical only)
-                    if self._render == "hardware" and hasattr(self, '_hid'):
+                    # 3. HID: StandardFrame → Stream Deck (per-terminal type)
+                    #    Physical terminals are peers — dispatch based on
+                    #    terminal type, not a global "render mode".
+                    if hasattr(self, '_hid') and self._hid.connected:
                         t_info = self._registry.get_by_id(terminal_id) if self._registry else None
-                        is_physical = t_info and t_info.type == "physical"
-                        if is_physical:
+                        if t_info and t_info.type == "physical":
                             self._hid.push(sf)
 
                 await asyncio.sleep(interval)

@@ -31,5 +31,6 @@ def web_frame(frame: StandardFrame) -> list[dict]:
             "index": ki.index,
             "widget_id": ki.widget_id,
             "image": base64.b64encode(ki.png).decode("ascii") if ki.png else "",
+            "animation_mode": "sprite",  # tell frontend to display the pre-rendered PNG
         })
     return keys

@@ -5,7 +5,13 @@
 // ── Constants ──────────────────────────────────────
 const PANELS = ['daemon', 'timing', 'appearance', 'theme', 'terminals', 'layouts', 'adapters', 'about'];
 const TIMING_FIELDS = ['thinking_timeout_ms', 'activity_window_ms', 'fast_frame_interval_ms', 'slow_frame_interval_ms'];
-const VALID_GRIDS = ['3x4', '3x5', '4x8'];
+// Grid validation: accept any NxM within reason (all Stream Deck models).
+function isValidGrid(g) {
+  try {
+    const [r, c] = g.split('x').map(Number);
+    return r >= 1 && c >= 1 && r <= 32 && c <= 32;
+  } catch (_) { return false; }
+}
 
 // ── Navigation ─────────────────────────────────────
 function showPanel(name) {
@@ -596,8 +602,8 @@ async function deleteTerminal(id) {
 }
 
 async function changeTerminalGrid(id) {
-  const grid = prompt('New grid size for terminal ' + id + ' (3x4, 3x5, 4x8):');
-  if (!grid || VALID_GRIDS.indexOf(grid.trim()) === -1) return;
+  const grid = prompt('New grid size for terminal ' + id + ' (e.g. 4x8, 3x2):');
+  if (!grid || !isValidGrid(grid.trim())) return;
   try {
     const resp = await fetch('/api/terminals/' + encodeURIComponent(id) + '/grid', {
       method: 'POST',

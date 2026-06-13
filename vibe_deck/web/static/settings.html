@@ -118,7 +118,7 @@
     <div class="ni" data-panel="appearance" onclick="show('appearance')"><span class="ni-icon">🎨</span>Appearance</div>
     <div class="ni" data-panel="theme" onclick="show('theme')"><span class="ni-icon">💅</span>Theme</div>
     <div class="nl">Management</div>
-    <div class="ni" data-panel="terminals" onclick="show('terminals')"><span class="ni-icon">📡</span>Terminals</div>
+    <div class="ni" data-panel="terminals" onclick="show('terminals')"><span class="ni-icon">📡</span>Endpoints</div>
     <div class="ni" data-panel="layouts" onclick="show('layouts')"><span class="ni-icon">📐</span>Layouts</div>
     <div class="ni" data-panel="adapters" onclick="show('adapters')"><span class="ni-icon">🔌</span>Adapters</div>
     <div class="nl">Info</div>
@@ -191,11 +191,11 @@
       <button class="btn" onclick="resetTheme()" style="margin-left:8px">↩ Reset Default</button>
     </div>
 
-    <!-- ═══ Terminals ═══ -->
+    <!-- ═══ Endpoints ═══ -->
     <div class="sp" data-panel="terminals" id="pn-terminals">
-      <div class="ph"><h2>📡 Terminals</h2><p>Manage physical and virtual terminals.</p></div>
+      <div class="ph"><h2>📡 Endpoints</h2><p>Manage endpoints and their renderers.</p></div>
       <div id="term-cards"><p class="es">Loading...</p></div>
-      <button class="btn" onclick="showWizard()" style="margin-top:12px">＋ Register New Terminal</button>
+      <button class="btn" onclick="showWizard()" style="margin-top:12px">＋ Register New Endpoint</button>
     </div>
 
     <!-- ═══ Layouts ═══ -->
@@ -241,7 +241,7 @@
           <tr><td style="padding:3px 8px;color:var(--accent)">GET /api/events</td><td style="color:var(--text-dim)">SSE frame stream</td></tr>
           <tr><td style="padding:3px 8px;color:var(--accent)">GET /api/config</td><td style="color:var(--text-dim)">Daemon configuration</td></tr>
           <tr><td style="padding:3px 8px;color:var(--accent)">GET /api/adapters</td><td style="color:var(--text-dim)">Adapter list & status</td></tr>
-          <tr><td style="padding:3px 8px;color:var(--accent)">GET /api/terminals</td><td style="color:var(--text-dim)">Terminal list</td></tr>
+          <tr><td style="padding:3px 8px;color:var(--accent)">GET /api/terminals</td><td style="color:var(--text-dim)">Endpoint list</td></tr>
         </table>
       </div>
     </div>

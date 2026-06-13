@@ -48,13 +48,17 @@ class TerminalRegistry:
         save_config(self._config)
 
     def _ensure_default_terminal(self) -> None:
-        """Create a default terminal if none exist."""
+        """Create a default virtual terminal if none exist.
+
+        The type starts as ``"virtual"`` — it is only promoted to
+        ``"physical"`` when hardware detection succeeds during startup.
+        """
         if self._config is None:
             return
         if not self._config.terminals:
             default = TerminalInfo.create(
                 name="default",
-                terminal_type="physical",
+                terminal_type="virtual",
                 grid="4x8",
                 layout="default-streamdeck-xl.yaml",
                 terminal_id="default",

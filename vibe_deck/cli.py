@@ -53,6 +53,7 @@ def main():
     _mcp_parser(sub)
     _skill_parser(sub)
     _setup_parser(sub)
+    _endpoint_parser(sub)
 
     args = parser.parse_args()
 
@@ -77,6 +78,7 @@ def main():
         "mcp": cmd_mcp,
         "skill": cmd_skill,
         "setup": cmd_setup,
+        "endpoint": cmd_endpoint,
     }
     handler = cmd_map.get(args.command)
     if handler:
@@ -100,17 +102,38 @@ def _setup_parser(sub):
                     help="Skip the agent handshake message")
 
 
+def _endpoint_parser(sub):
+    """``vibe-deck endpoint`` — manage Endpoints."""
+    p = sub.add_parser("endpoint", help="Manage Endpoints (list, delete, rename)",
+        description="Manage VibeDeck Endpoints from the CLI.",
+        epilog="Examples:\n  vibe-deck endpoint list\n  vibe-deck endpoint delete <id>\n  vibe-deck endpoint rename <id> <name>")
+    ep = p.add_subparsers(dest="endpoint_command")
+    el = ep.add_parser("list", help="List all Endpoints",
+        epilog="Example: vibe-deck endpoint list --json")
+    el.add_argument("--json", action="store_true", help="Machine-readable JSON output")
+    ed = ep.add_parser("delete", help="Delete an Endpoint by id",
+        epilog="Example: vibe-deck endpoint delete abc123")
+    ed.add_argument("id", help="Endpoint ID (from vibe-deck endpoint list)")
+    ed.add_argument("--force", action="store_true", help="Skip confirmation prompt")
+    er = ep.add_parser("rename", help="Rename an Endpoint",
+        epilog="Example: vibe-deck endpoint rename abc123 \"My New Name\"")
+    er.add_argument("id", help="Endpoint ID")
+    er.add_argument("name", help="New display name")
+
+
 def _serve_parser(sub):
     p = sub.add_parser("serve", help="Start the VibeDeck daemon",
         description="Start the VibeDeck daemon with Web UI.",
         epilog="Example: vibe-deck serve --port 9734")
     p.add_argument("--port", type=int, default=9734, help="HTTP server port (default: 9734)")
     p.add_argument("--render", choices=["sim", "hardware"], default="sim",
-                   help="[DEPRECATED] Render target. Use --no-physical instead")
+                   help="[DEPRECATED] Hardware detection is now automatic. "
+                        "Use --no-physical to disable.")
     p.add_argument("--device", type=int, default=0, help="Stream Deck device index")
     p.add_argument("--no-autodetect", action="store_true", help="Disable agent auto-discovery")
     p.add_argument("--expose", action="store_true", help="Bind to 0.0.0.0 (allow LAN connections)")
-    p.add_argument("--no-physical", action="store_true", help="Skip Stream Deck hardware detection (virtual-only mode)")
+    p.add_argument("--no-physical", action="store_true",
+                   help="Skip Stream Deck hardware detection (virtual-only mode)")
 
 
 def _status_parser(sub):
@@ -233,7 +256,7 @@ def cmd_serve(args):
     host = "0.0.0.0" if expose else "localhost"
     print(f"\n🦞  VibeDeck {__version__}")
     print(f"   Mode:     live (agent detection active)")
-    print(f"   Render:   {'virtual-only' if no_physical else args.render}")
+    print(f"   Physical: {'disabled (--no-physical)' if no_physical else 'auto-detect'}")
     print(f"   Web UI:   http://{host}:{args.port}")
     print(f"   LAN:      {'yes' if expose else 'no (--expose to enable)'}")
     print(f"   Ctrl+C to stop\n")
@@ -606,6 +629,84 @@ def cmd_skill(args):
         print(f"Removing skill: {args.name}")
     else:
         print("Usage: vibe-deck skill {list|install|remove}")
+
+
+def cmd_endpoint(args):
+    """Endpoint CRUD — communicates with the running daemon via HTTP."""
+    import urllib.request
+    import urllib.error
+
+    DAEMON = "http://localhost:9734"
+
+    def _check_daemon():
+        try:
+            urllib.request.urlopen(f"{DAEMON}/api/frame", timeout=2)
+            return True
+        except Exception:
+            return False
+
+    if args.endpoint_command == "list":
+        try:
+            resp = urllib.request.urlopen(f"{DAEMON}/api/terminals", timeout=5)
+            data = json.loads(resp.read())
+            endpoints = data.get("terminals", [])
+            if args.json:
+                print(json.dumps(endpoints, indent=2))
+            elif endpoints:
+                print(f"\n Endpoints ({len(endpoints)}):")
+                print(f" {'ID':<38} {'NAME':<22} {'TYPE':<10} {'GRID':<6}")
+                print("-" * 78)
+                for ep in endpoints:
+                    token_preview = ep.get("token", "")[:8] + "..."
+                    print(f" {ep['id']:<38} {ep['name']:<22} {ep['type']:<10} {ep['grid']:<6}")
+            else:
+                print("No Endpoints registered.")
+        except Exception as e:
+            print(f"⚠  Could not reach daemon on {DAEMON}")
+            print(f"   Is the daemon running?  vibe-deck serve")
+
+    elif args.endpoint_command == "delete":
+        if not args.force:
+            confirm = input(f"Delete Endpoint {args.id!r}? This cannot be undone. [y/N] ")
+            if confirm.lower() != "y":
+                print("Cancelled.")
+                return
+        try:
+            req = urllib.request.Request(
+                f"{DAEMON}/api/terminals/{args.id}", method="DELETE")
+            resp = urllib.request.urlopen(req, timeout=5)
+            print(f"✓ Endpoint {args.id!r} deleted.")
+        except urllib.error.HTTPError as e:
+            body = e.read().decode() if e.fp else ""
+            try:
+                msg = json.loads(body).get("error", body)
+            except Exception:
+                msg = body
+            print(f"✗ {msg}")
+        except Exception as e:
+            print(f"⚠  Could not reach daemon. Is it running?  vibe-deck serve")
+
+    elif args.endpoint_command == "rename":
+        try:
+            body = json.dumps({"name": args.name}).encode()
+            req = urllib.request.Request(
+                f"{DAEMON}/api/terminals/{args.id}/rename",
+                data=body, method="POST",
+                headers={"Content-Type": "application/json"})
+            resp = urllib.request.urlopen(req, timeout=5)
+            print(f"✓ Endpoint {args.id!r} renamed to {args.name!r}.")
+        except urllib.error.HTTPError as e:
+            body = e.read().decode() if e.fp else ""
+            try:
+                msg = json.loads(body).get("error", body)
+            except Exception:
+                msg = body
+            print(f"✗ {msg}")
+        except Exception as e:
+            print(f"⚠  Could not reach daemon. Is it running?  vibe-deck serve")
+
+    else:
+        print("Usage: vibe-deck endpoint {list|delete|rename}")
 
 
 def cmd_setup(args):

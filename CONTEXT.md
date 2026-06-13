@@ -6,22 +6,38 @@
 
 ### VibeDeck
 
-A control surface for local AI workflows that turns any **Terminal** into a **peripheral awareness device**（余光设备）— a secondary display that lets you monitor AI agents and system status at a glance, without leaving your primary workspace. The canonical physical Terminal is an Elgato Stream Deck; virtual Terminals (phone, tablet, browser) are supported as first-class peers.
+A control surface for local AI workflows that lets you monitor AI agents and system status at a glance, without leaving your primary workspace. VibeDeck manages **Endpoints** — logical widget surfaces — and renders them through one or more **Renderers** (physical Stream Deck hardware and virtual web/phone viewers).
 
-### Terminal（终端）
+### Endpoint（服务端点）
 
-A display-and-input grid device that VibeDeck renders onto. A Terminal is a grid of key cells — each cell can show state (icon, color, animation, label) and receive input (press, long-press). All Terminals are equal at the logical layer; they differ only in physical properties (size, resolution, input mechanism).
+A logical grid surface that owns an independent set of widgets, a layout, and a keymap. An Endpoint is a **service** — it persists configuration, accepts widget placement, and produces a `StandardFrame` on every tick. It is *not* a physical device; it's the logical "workspace" to which devices and viewers attach.
 
-| Terminal Type | Input | Transport |
-|---|---|---|
-| **Physical Terminal** (e.g. Elgato Stream Deck) | Physical buttons | USB / HID |
-| **Virtual Terminal** (e.g. phone, tablet, browser) | Touch screen | LAN / Bluetooth |
+An Endpoint always has at least one **Virtual Renderer** (SSE → browser/phone). It may optionally have a **Physical Renderer** (HID → Stream Deck) when a hardware device is **Bound** to it.
 
-VibeDeck drives one or more Terminals simultaneously, each with its own independent layout.
+Every Endpoint has a `grid` (e.g. `4x8`), a unique `id`, a `name`, and an auth `token`. The built-in `"default"` Endpoint serves as the initial workspace — it has no special status and can be deleted.
+
+### Renderer（渲染器）
+
+A Renderer consumes a `StandardFrame` from an Endpoint and delivers it to a specific output target. Renderers are stateless byte-pushers — they do not compose images, manage widget state, or know about layouts.
+
+| Renderer | Output | Transport | Lifecycle |
+|---|---|---|---|
+| **Virtual Renderer** | Browser, phone, tablet | SSE (server-sent events) | Always active for every Endpoint |
+| **Physical Renderer** | Elgato Stream Deck | USB HID | Active only when a device is Bound to the Endpoint |
+
+An Endpoint with both renderers active pushes the **same** `StandardFrame` to both — the virtual viewer is an exact mirror of what the hardware displays.
+
+### Binding（绑定）
+
+The exclusive relationship between an Endpoint and a physical Stream Deck device. A Binding is:
+
+- **Exclusive**: one Stream Deck → one Endpoint. One Endpoint → at most one Stream Deck.
+- **User-initiated**: on first connection, the user chooses which Endpoint to bind (or creates a new one). Grid compatibility is validated — the hardware grid must contain or match the Endpoint grid.
+- **Persistent**: stored in config, survives daemon restarts and device hot-plugs.
 
 ### Widget
 
-A self-contained display-and-interaction unit that occupies one key cell on a Terminal. A Widget can show status, react to presses, run animations, or carry out an interactive workflow.
+A self-contained display-and-interaction unit that occupies one key cell on an Endpoint. A Widget can show status, react to presses, run animations, or carry out an interactive workflow.
 
 Widgets are the atomic building block — every key is a Widget.
 
@@ -68,24 +84,24 @@ VibeDeck and external Agents exchange state through three channels, each serving
 
 ## Terminal Connection
 
-Virtual Terminals (phone, tablet, browser) connect to the daemon over LAN. The connection model:
+Virtual Renderers (browser, phone, tablet) connect to the daemon over LAN via SSE. The connection model:
 
 - **Discovery**: Daemon prints a QR code at startup containing the full connection URL (`http://<host>:<port>/?token=<token>`). User scans with phone to connect instantly. Manual IP:port entry available as fallback.
 - **Network binding**: Web Server defaults to `localhost`. `vibe-deck serve --expose` binds to `0.0.0.0` to allow LAN connections. Token authentication is required regardless of binding.
-- **Auth**: Per-device tokens, persisted to `~/.vibe-deck/config.yaml`. Each Virtual Terminal gets its own token — individually revokable. Token embedded in QR code URL. Daemon validates token on each request (SSE, API).
-- **Rendering**: MVP uses server-side rendering — daemon renders Widgets to PNG images and pushes them to the Virtual Terminal. Client-side rendering deferred to future Bluetooth support.
-- **First connection**: Virtual Terminal user picks grid density (3×4 / 3×5 / 4×8) and optional device name. Layout is saved and auto-reloaded on reconnection.
+- **Auth**: Per-Endpoint tokens, persisted to `~/.vibe-deck/config.yaml`. Each Endpoint gets its own token — individually revokable. Token embedded in QR code URL. Daemon validates token on each request (SSE, API).
+- **Rendering**: Server-side rendering — daemon renders widgets to PNG images via the PIL Renderer and pushes them as a `StandardFrame` to the Virtual Renderer via SSE. Physical Renderer receives the same frame via HID.
+- **First connection**: Virtual viewer user picks grid density (3×4 / 3×5 / 4×8) and optional endpoint name. Layout is saved and auto-reloaded on reconnection.
 
 ## Layout
 
-The user's Terminal is divided into zones. VibeDeck ships preset templates; users can customize and share their own. Each Terminal type has its own layout sizing (e.g. Stream Deck XL = 4×8, phone = app-defined grid).
+The user's Endpoint grid is divided into zones. VibeDeck ships preset templates; users can customize and share their own. Each Endpoint has its own layout sizing (e.g. Stream Deck XL = 4×8, phone = app-defined grid).
 
 ### Layout Assignment
 
-| Terminal Type | How Layout is Selected |
+| Endpoint Type | How Layout is Selected |
 |---|---|
-| **Physical Terminal** | Auto-detected at startup. Daemon matches device model to a default template (e.g. Stream Deck XL → `xl-default.yaml`). User can override. |
-| **Virtual Terminal** | On-demand on first connection. User goes through a short setup flow (pick grid size, template) on the phone. Layout is saved and reused on subsequent connections. |
+| **Physical Renderer (Stream Deck)** | Auto-detected at startup. Daemon matches device model to a default template (e.g. Stream Deck XL → `xl-default.yaml`). User can override. |
+| **Virtual Renderer only** | On-demand on first connection. User goes through a short setup flow (pick grid size, template) in the browser. Layout is saved and reused on subsequent connections. |
 
 Typical zone breakdown:
 
@@ -121,7 +137,7 @@ Layers are declared per-adapter in `adapter.yaml`. Community contributors can de
 
 ### Standard Frame
 
-A device-independent, fully-rendered snapshot of a Terminal at one moment. Every key is a pair of encoded image bytes (JPEG for embedded devices, PNG for high-quality consumers). The Standard Frame is the universal currency between the PIL Renderer and all Transports — it contains no rendering logic, no text to be composed, just final bytes ready to push.
+A device-independent, fully-rendered snapshot of an Endpoint at one moment. Every key is a pair of encoded image bytes (JPEG for embedded devices, PNG for high-quality consumers). The Standard Frame is the universal currency between the PIL Renderer and all Renderers — it contains no rendering logic, no text to be composed, just final bytes ready to push.
 
 ### Transport
 
@@ -218,15 +234,15 @@ See `docs/adapter-research.md` for detailed per-tool integration analysis.
 
 ## Resilience
 
-The Terminal is a **display and input device** — the daemon is the brain. If a Physical Terminal is unplugged and re-plugged, the Render Engine reconnects automatically without losing state. If a Virtual Terminal loses its network connection, it reconnects and resyncs automatically. The Core Daemon, Connectors, and layout state all continue normally during the disconnect window.
+Endpoints are **logical entities** — the daemon is the brain. If a physical Stream Deck is unplugged and re-plugged, the Physical Renderer reconnects automatically without losing Endpoint state. If a virtual viewer loses its network connection, it reconnects and resyncs automatically. The Core Daemon, Connectors, and layout state all continue normally during the disconnect window.
 
-## Multi-Terminal
+## Multi-Endpoint
 
-One daemon drives multiple Terminals simultaneously, each with its own independent layout file — e.g. a Stream Deck XL for monitoring + a phone for approvals, or two phones placed at different workstations. No hard limit on the number of connected Terminals.
+One daemon drives multiple Endpoints simultaneously, each with its own independent layout file — e.g. a Stream Deck XL for monitoring + a phone for approvals, or two phones placed at different workstations. No hard limit on the number of Endpoints.
 
 ### Interaction Model
 
-All Terminals support the same interaction model: **display + click**. Widgets show status and respond to presses. Layout editing (drag, rearrange, delete Widgets) is done exclusively through the desktop Web Editor or CLI — never on the Terminal itself. A phone Terminal is not a configuration tool; it's a monitoring and interaction surface.
+All Endpoint renderers support the same interaction model: **display + click**. Widgets show status and respond to presses. Layout editing (drag, rearrange, delete Widgets) is done exclusively through the desktop Web Editor or CLI — never on the hardware device itself. A phone viewer is not a configuration tool; it's a monitoring and interaction surface.
 
 ## Community Adapters
 

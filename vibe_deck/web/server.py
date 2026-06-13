@@ -274,11 +274,18 @@ class VibeDeckWebServer:
     # ── Handlers ──────────────────────────────────
 
     async def _index(self, request: web.Request) -> web.Response:
-        """Serve the Web Simulator SPA."""
+        """Serve the Web Simulator SPA (no-cache to always pick up changes)."""
         index_path = STATIC_DIR / "index.html"
         if not index_path.exists():
             return web.Response(text="Web Simulator not yet built", status=404)
-        return web.FileResponse(index_path)
+        return web.FileResponse(
+            index_path,
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
+        )
 
     async def _get_frame(self, request: web.Request) -> web.Response:
         """Return the current LayoutFrame as JSON (token-authenticated)."""
@@ -429,12 +436,14 @@ class VibeDeckWebServer:
         if not name:
             return web.json_response({"error": "name is required"}, status=400)
 
-        # Validate grid
-        if grid not in ("3x4", "3x5", "4x8"):
-            return web.json_response({"error": f"invalid grid: {grid}"}, status=400)
-
-        # Parse rows/cols from grid
-        rows, cols = map(int, grid.split("x"))
+        # Validate grid format (allows all Stream Deck models:
+        # Mini 3x2, Neo 2x4, Original 3x5, XL 4x8, Plus 4x2, etc.)
+        try:
+            rows, cols = map(int, grid.split("x"))
+            if rows < 1 or cols < 1 or rows > 32 or cols > 32:
+                raise ValueError
+        except (ValueError, TypeError):
+            return web.json_response({"error": f"invalid grid: {grid!r} (expected NxM)"}, status=400)
 
         # Create terminal in registry
         terminal = self._registry.register(
@@ -978,10 +987,9 @@ class VibeDeckWebServer:
         except (ValueError, TypeError):
             return web.json_response({"error": f"invalid grid format: {grid!r} (expected e.g. 4x8)"}, status=400)
 
-        # Validate allowed grids
-        valid_grids = ("3x4", "3x5", "4x8")
-        if grid not in valid_grids:
-            return web.json_response({"error": f"invalid grid {grid!r}; valid: {', '.join(valid_grids)}"}, status=400)
+        # Validate grid dimensions (allows all Stream Deck models)
+        if rows < 1 or cols < 1 or rows > 32 or cols > 32:
+            return web.json_response({"error": f"invalid grid dimensions: {rows}x{cols}"}, status=400)
 
         terminal = self._registry.get_by_id(terminal_id)
         if terminal is None:

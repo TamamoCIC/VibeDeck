@@ -178,7 +178,7 @@ class VibeDeckConfig:
     """Root configuration for VibeDeck."""
 
     port: int = DEFAULT_PORT
-    render: str = DEFAULT_RENDER  # "sim" or "hardware"
+    render: str = DEFAULT_RENDER  # DEPRECATED: hardware detection is now automatic
     device_index: int = 0
     expose: bool = False  # bind to 0.0.0.0 instead of localhost
     autodetect: bool = True
@@ -219,10 +219,14 @@ def ensure_dirs() -> None:
 
 
 def _default_config() -> VibeDeckConfig:
-    """Build the default configuration with built-in agent patterns and a default terminal."""
+    """Build the default configuration with built-in agent patterns and a default terminal.
+
+    The default terminal starts as ``"virtual"`` — it is promoted to
+    ``"physical"`` only when Stream Deck hardware is detected at startup.
+    """
     default_terminal = TerminalInfo.create(
         name="default",
-        terminal_type="physical",
+        terminal_type="virtual",
         grid="4x8",
         layout="default-streamdeck-xl.yaml",
         terminal_id="default",
