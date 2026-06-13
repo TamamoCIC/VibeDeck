@@ -61,7 +61,7 @@ VibeDeck ships with built-in adapters (Claude Code, Codex, Hermes, etc.). The co
 
 ### Approval System（审批系统）
 
-VibeDeck's mechanism for letting the user approve, reject, or inspect actions that an Agent requests at runtime. Three interaction modes:
+> 📋 **Planned.** VibeDeck's mechanism for letting the user approve, reject, or inspect actions that an Agent requests at runtime. Three interaction modes:
 
 | Mode | Behaviour |
 |---|---|
@@ -69,20 +69,20 @@ VibeDeck's mechanism for letting the user approve, reject, or inspect actions th
 | **Multi-Agent（多Agent）** | Multiple Agents may each request approval. The approval zone shows blinking icons; pressing one expands it into focused mode. |
 | **Ceremonial（仪式性）** | A high-stakes request (e.g. granting root access) that spans large red/green zones to force a deliberate pause. |
 
-The approval system is rendered as a Widget Group inside the approval zone of the current layout.
+The approval system is rendered as a Widget Group inside the approval zone of the current layout. Message types (`APPROVAL_REQUESTED`, `APPROVAL_RESOLVED`) and `WidgetType.APPROVAL` are defined in the codebase but no flow logic is implemented yet.
 
 ## Communication Model
 
 VibeDeck and external Agents exchange state through three channels, each serving a different purpose:
 
-| Channel | Direction | Purpose |
-|---|---|---|
-| **Process discovery** | VibeDeck → system | Auto-detect agent processes by matching process name + command-line patterns. Agent starts → Widget appears. Agent stops → Widget clears. |
-| **File watch** | Agent → VibeDeck | Agent writes status JSON to `~/.vibe-deck/agents/`. VibeDeck watches via inotify. Zero-code integration: any tool that can write a file can report status. |
-| **WebSocket** | Bidirectional | High-real-time interactive communication: approval requests, detailed progress, streaming status. Agents connect to `ws://localhost:<port>/vibedeck/ws` when they need the fast-answer loop. |
-| **MCP（Model Context Protocol）** | Bidirectional | VibeDeck acts as both MCP Server (exposes agent status, widget state, deck layout to external tools) and MCP Client (connects to other MCP servers to ingest monitoring data). This is the fourth channel, designed for AI Agent ↔ VibeDeck structured communication. |
+| Channel | Direction | Purpose | Status |
+|---|---|---|---|
+| **Process discovery** | VibeDeck → system | Auto-detect agent processes by matching process name + command-line patterns. Agent starts → Widget appears. Agent stops → Widget clears. | ✅ v0.1 |
+| **File watch** | Agent → VibeDeck | Agent writes status JSON/JSONL to `~/.vibe-deck/agents/`. VibeDeck watches via filesystem events. Zero-code integration: any tool that can write a file can report status. | ✅ v0.1 |
+| **WebSocket** | Bidirectional | High-real-time interactive communication: approval requests, detailed progress, streaming status. Agents connect to `ws://localhost:<port>/vibedeck/ws` when they need the fast-answer loop. | 📋 Planned |
+| **MCP（Model Context Protocol）** | Bidirectional | VibeDeck acts as MCP Server (exposes agent status, widget state, deck layout to external tools). MCP Client (connects to other MCP servers) is planned. | 🟡 Server done, Client planned |
 
-## Terminal Connection
+## Virtual Renderer Connection
 
 Virtual Renderers (browser, phone, tablet) connect to the daemon over LAN via SSE. The connection model:
 
@@ -94,16 +94,9 @@ Virtual Renderers (browser, phone, tablet) connect to the daemon over LAN via SS
 
 ## Layout
 
-The user's Endpoint grid is divided into zones. VibeDeck ships preset templates; users can customize and share their own. Each Endpoint has its own layout sizing (e.g. Stream Deck XL = 4×8, phone = app-defined grid).
+The user's Endpoint grid holds widgets; each Endpoint has its own layout sizing (e.g. Stream Deck XL = 4×8, phone = app-defined grid). Layouts are saved/loaded as YAML files under `~/.vibe-deck/layouts/`.
 
-### Layout Assignment
-
-| Endpoint Type | How Layout is Selected |
-|---|---|
-| **Physical Renderer (Stream Deck)** | Auto-detected at startup. Daemon matches device model to a default template (e.g. Stream Deck XL → `xl-default.yaml`). User can override. |
-| **Virtual Renderer only** | On-demand on first connection. User goes through a short setup flow (pick grid size, template) in the browser. Layout is saved and reused on subsequent connections. |
-
-Typical zone breakdown:
+> 📋 **Zone system is planned for v0.2.** The current v0.1 layout is a flat widget list with a shared widget pool. The planned zone breakdown:
 
 | Zone | What lives there |
 |---|---|
@@ -145,7 +138,7 @@ A thin output adapter that consumes a `StandardFrame` and delivers it to a speci
 
 ## Runtime Architecture
 
-VibeDeck runs as a **systemd daemon** (`systemctl enable vibe-deck`) — always on, always watching. It is structured in three layers:
+In v0.1, VibeDeck runs as a foreground Python process (`vibe-deck serve`). A **systemd daemon** mode (`systemctl enable vibe-deck`) is planned for v0.2. The architecture is structured in three layers:
 
 | Layer | Responsibility |
 |---|---|
@@ -162,37 +155,43 @@ VibeDeck provides a comprehensive CLI as the primary interface for developers an
 ```
 vibe-deck serve              # start the daemon
 vibe-deck status             # terminal dashboard: all agents, deck state
+vibe-deck whoami             # identify Claude Code session in current terminal
+vibe-deck info               # list connected Stream Deck devices
 vibe-deck widget list        # list active Widgets
 vibe-deck widget add         # manually add a Widget
+vibe-deck layout list        # list saved layouts
 vibe-deck layout load <name> # switch layout
 vibe-deck layout save        # save current layout
 vibe-deck adapter list       # list installed adapters
-vibe-deck adapter install    # install community adapter
 vibe-deck config show        # view configuration
+vibe-deck endpoint list      # list endpoints
+vibe-deck endpoint delete    # delete an endpoint
+vibe-deck endpoint rename    # rename an endpoint
 vibe-deck mcp serve          # start MCP server (stdio transport)
-vibe-deck skill install      # install a VibeDeck Skill
+vibe-deck setup claude-code  # install Claude Code hooks integration
+vibe-deck skill list         # list installed skills
 ```
 
 Every subcommand includes `--help` with examples. The `vibe-deck status` command prints a live dashboard in the terminal — no Web UI required. This ensures VibeDeck remains accessible to headless setups and SSH sessions.
 
 ## MCP（Model Context Protocol）
 
-VibeDeck speaks MCP as both a **server** and a **client**:
+VibeDeck speaks MCP as both a **server** and (planned) a **client**:
 
-| Role | Purpose |
-|---|---|
-| **MCP Server** | Exposes VibeDeck state as MCP tools/resources. External Agents (Claude Code, Codex, etc.) can call `vibedeck.list_agents()`, `vibedeck.get_widget()`, `vibedeck.press_key()` to read and interact with the Deck programmatically. |
-| **MCP Client** | VibeDeck connects to other MCP servers to ingest monitoring data. For example, a GPU monitor MCP server reports VRAM usage → VibeDeck renders it as a System Widget. |
+| Role | Purpose | Status |
+|---|---|---|
+| **MCP Server** | Exposes VibeDeck state as MCP tools/resources. External Agents (Claude Code, Codex, etc.) can call `vibedeck.list_agents()`, `vibedeck.get_widget()`, `vibedeck.press_key()` to read and interact with the Deck programmatically. | ✅ Implemented (v0.1) |
+| **MCP Client** | VibeDeck connects to other MCP servers to ingest monitoring data. For example, a GPU monitor MCP server reports VRAM usage → VibeDeck renders it as a System Widget. | 📋 Planned |
 
 MCP is the fourth communication channel, designed specifically for structured AI Agent ↔ VibeDeck interaction.
 
 ## Skills
 
-A VibeDeck **Skill** is a Claude Code skill that bundles an adapter, hook configuration, and display preset into one installable unit. It enables users to run `vibe-deck skill install claude-code` and have everything configured automatically.
-
-Skills also serve as the community distribution format: a well-packaged adapter can be published as a Skill so others `vibe-deck skill install <url>` it.
+> 📋 **Planned.** A VibeDeck **Skill** will bundle an adapter, hook configuration, and display preset into one installable unit. The CLI has `vibe-deck skill list|install|remove` stubs; full implementation is planned for v0.2.
 
 Skills are the **distribution layer** on top of Adapters. An Adapter defines *what* to display; a Skill packages that Adapter with install scripts and default hooks so it works out of the box.
+
+In v0.1, the `vibe-deck setup claude-code` command handles the most common integration directly — it copies the reporter script and generates hooks configuration without the full skill abstraction.
 
 ## Configuration
 
@@ -200,9 +199,9 @@ Skills are the **distribution layer** on top of Adapters. An Adapter defines *wh
 - **Agent patterns**: `~/.vibe-deck/config.yaml` — process-matching rules for auto-discovery.
 - **Web Editor**: Served at `http://localhost:${port}` by the Core Daemon. Drag-and-drop Widget arrangement. Writes YAML layout files.
 
-## v0.1 Scope
+## v0.1 Scope — Implemented
 
-### MVP Adapters — Integration Strategy
+### ✅ MVP Adapters (all four built, shipping)
 
 All four adapters use **passive monitoring** — no agent software modifications required.
 
@@ -213,24 +212,59 @@ All four adapters use **passive monitoring** — no agent software modifications
 | **OpenClaw** | Process scanner (`openclaw`) | WebSocket at `ws://127.0.0.1:18789` (JSON-RPC) | Daemon-internal WS client task; publishes `WIDGET_STATE_UPDATE` to MessageBus |
 | **Telegram** | Config-driven (env vars `TG_API_ID`, `TG_API_HASH`) | Telethon client (user session) | Daemon-internal Telethon task if credentials present; writes JSON → File Watcher |
 
-### Adapter Lifecycle
+### ✅ Rendering Pipeline
 
-1. Process Scanner detects agent → publishes `AGENT_ONLINE`
-2. AdapterManager receives `AGENT_ONLINE` → creates matching adapter instance → starts asyncio task
-3. Adapter connects to agent's data source → monitors state changes → publishes `WIDGET_STATE_UPDATE` to MessageBus
-4. LayoutEngine consumes `WIDGET_STATE_UPDATE` → updates Widget display
-5. Process Scanner detects agent exit → publishes `AGENT_OFFLINE` → AdapterManager stops adapter task
+- **Layer compositing** — Backdrop → Sprite → Icon → Label → Badge → Effect (all implemented)
+- **StandardFrame** — device-independent frame with JPEG + PNG per key
+- **HIDTransport** — USB HID delivery with device-specific encoding (flip for XL, diff for efficiency)
+- **WebTransport** — SSE delivery with base64 PNG encoding
 
-Telegram is the exception: it is started at daemon launch if credentials are configured, not triggered by process detection.
+### ✅ Core Infrastructure
 
-### MVP Widgets
+- **MessageBus** — asyncio pub/sub with 10 message types
+- **LayoutEngine** — per-Endpoint layouts, widget pool, YAML persistence, auto-save/restore
+- **ProcessScanner** — auto-detects agent processes, publishes AGENT_ONLINE/OFFLINE
+- **FileWatcher** — watches `~/.vibe-deck/agents/` for JSON/JSONL status updates
+- **Web Server** — aiohttp REST API + SSE, full settings UI, virtual viewer
+- **Animation Engine** — pulse, blink, crawl, progress effects + sprite clip playback
+- **Platform layer** — Windows (full), Linux/macOS (skeleton)
+
+### ✅ Widgets (v0.1)
 
 - **Agent Status** — icon + animation + color responding to connector state
-- **Approval (Focused)** — simple A/B/C/D key mapping
-- **Toggle / Command** — press-to-trigger shortcut key
+- **Window Focus Toggle** — press key → bring agent window to front (Win32 multi-strategy cascade)
+- **Widget Pool** — activate/deactivate widgets on any endpoint from shared pool
+
+### ✅ Claude Code Integration
+
+- **Hook setup** (`vibe-deck setup claude-code`) — copies reporter script, generates hooks config
+- **Event mapping** — SessionStart, Stop, UserPromptSubmit, PreToolUse, PostToolUse, PreCompact, SubagentStop, SessionEnd
+- **Interactive state detection** — recognizes AskUserQuestion, permission prompts, thinking timers
+- **Project identity** — cwd-driven project name extraction
+- **Pause detection** — recognizes Claude Code stop hooks
+
+## v0.1 Scope — Planned (not yet built)
+
+### 📋 Widgets
+
+- **Approval System** — Focused/Multi-Agent/Ceremonial modes. Message types defined but no flow logic.
+- **Toggle / Command** — press-to-trigger shortcut key (stub only)
 - **Static Info** — text/image display (clock, git status, etc.)
 
-See `docs/adapter-research.md` for detailed per-tool integration analysis.
+### 📋 Layout
+
+- **Zone system** — Approval zone, Agent zone, Utility zone with pagination
+- **Preset templates** — per-device-size layout templates (XL, Standard, Mini, Phone)
+
+### 📋 Integration
+
+- **systemd daemon** — currently foreground process only
+- **MCP Client** — connect to external MCP servers for monitoring data
+- **WebSocket bidirectional channel** — currently SSE (server→client) only; agents communicate via file watch
+- **Community adapter marketplace** — `adapter.yaml` parser and discovery in `~/.vibe-deck/adapters/`
+- **Skill distribution system** — full install/remove with `skill.yaml` format
+- **System metric widgets** — GPU, CPU, memory, disk
+- **Linux platform parity** — feature-complete on par with Windows backend
 
 ## Resilience
 
@@ -246,12 +280,12 @@ All Endpoint renderers support the same interaction model: **display + click**. 
 
 ## Community Adapters
 
-Community adapters live under `~/.vibe-deck/adapters/<name>/`. Each adapter is:
+> 📋 **Planned.** Community adapters will live under `~/.vibe-deck/adapters/<name>/`. Each adapter will be:
 
 - **`adapter.yaml`** — declares the agent's display states and how they map to VibeDeck primitives (icon, color, animation, label). Enough for simple file-watch integrations.
 - **`adapter.py`** (optional) — custom connector logic for non-standard data sources.
 
-Built-in adapters ship with VibeDeck and cannot be removed. Community adapters install by dropping a folder under this path.
+Built-in adapters ship with VibeDeck and cannot be removed. Community adapters will install by dropping a folder under this path. The `adapter.yaml` parser and discovery mechanism are planned for v0.2.
 
 ## Widget Status Model
 

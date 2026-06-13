@@ -4,6 +4,11 @@
 
 Accepted (2026-06-08)
 
+> **Note:** The terminology in this ADR ("Terminal") has been superseded by
+> [ADR 0003](0003-endpoint-renderer-split.md) ("Endpoint" / "Renderer" / "Binding").
+> The architectural decisions (multi-surface, per-Endpoint layout) remain valid,
+> but the vocabulary has been refined. See ADR 0003 for current terminology.
+
 ## Context
 
 VibeDeck was originally designed to drive a single Elgato Stream Deck. The `LayoutEngine` held one `LayoutFrame`, and the render loop pushed that frame to at most two outputs (hardware USB + web simulator) — both showing the same layout.
