@@ -53,6 +53,7 @@ class VibeDeckWebServer:
         bus=None,
         shutdown_cb=None,
         animation_engine=None,
+        renderer=None,   # PILRenderer (new pipeline)
     ) -> None:
         self._engine = layout_engine
         self._registry = registry
@@ -61,12 +62,11 @@ class VibeDeckWebServer:
         self._expose = expose
         self._shutdown_cb = shutdown_cb
         self._anim_engine = animation_engine
+        self._renderer = renderer  # PILRenderer for StandardFrame rendering
         self._app = web.Application()
         self._runner: web.AppRunner | None = None
         # Per-terminal SSE subscribers: terminal_id → list[StreamResponse]
         self._clients: dict[str, list[web.StreamResponse]] = {}
-        # Per-terminal SimRenderer instances
-        self._renderers: dict[str, SimRenderer] = {}
 
         # Routes
         self._app.router.add_get("/", self._index)
@@ -200,29 +200,33 @@ class VibeDeckWebServer:
 
     # ── Frame broadcast ────────────────────────────
 
-    async def broadcast_frame(self, terminal_id: str = "default", frame=None, debug_info: dict | None = None) -> None:
-        """Push a LayoutFrame to SSE subscribers for a specific terminal."""
+    async def broadcast_frame(
+        self,
+        terminal_id: str = "default",
+        frame=None,              # list[dict] — web_frame output
+        layout_frame=None,       # LayoutFrame — for metadata/pool
+        debug_info: dict | None = None,
+    ) -> None:
+        """Push pre-rendered key images to SSE subscribers."""
         clients = self._clients.get(terminal_id, [])
         if not clients:
             return
 
         if frame is None:
-            frame = self._engine.get_frame(terminal_id)
-        if frame is None:
             return
 
-        renderer = self._get_renderer(frame.rows, frame.cols, frame.display_name)
-        keys = renderer.render_frame(frame)
+        keys = frame  # already rendered by PILRenderer → web_frame()
 
-        # Include widget metadata for the web UI inspector panel
-        widget_meta = {
-            wid: ws.meta for wid, ws in frame.widgets.items()
-        }
+        # Collect widget metadata from the layout frame for the UI inspector
+        widget_meta = {}
+        if layout_frame is not None:
+            widget_meta = {
+                wid: ws.meta for wid, ws in layout_frame.widgets.items()
+            }
 
-        # Serialize pool data so the UI gets real-time pool updates
+        # Pool data for the UI widget panel
         pool_widgets = []
         for ws in self._engine.pool_list():
-            # Extract project name from cwd for human-readable pool labels
             cwd = ws.meta.get("cwd", "")
             project = ws.meta.get("project", "")
             if not project and cwd:
@@ -241,10 +245,14 @@ class VibeDeckWebServer:
                 "activated_on": self._engine.pool_activated_terminals(ws.id),
             })
 
+        display_name = (
+            layout_frame.display_name if layout_frame else "4x8"
+        )
+
         data = json.dumps({
             "type": "frame",
             "keys": keys,
-            "display_name": frame.display_name,
+            "display_name": display_name,
             "terminal_id": terminal_id,
             "_meta": widget_meta,
             "_pool": pool_widgets,
@@ -276,16 +284,25 @@ class VibeDeckWebServer:
         if terminal_id is None:
             return web.json_response({"error": "invalid or missing token"}, status=401)
 
-        frame = self._engine.get_frame(terminal_id)
-        if frame is None:
+        layout_frame = self._engine.get_frame(terminal_id)
+        if layout_frame is None:
             return web.json_response({"error": "terminal not found"}, status=404)
 
-        renderer = self._get_renderer(frame.rows, frame.cols, frame.display_name)
-        keys = renderer.render_frame(frame)
+        # Render via new pipeline if available, else fall back to SimRenderer
+        if self._renderer is not None:
+            from ..transport.web import web_frame
+            sf = self._renderer.render(layout_frame)
+            keys = web_frame(sf)
+        else:
+            renderer = self._get_renderer(
+                layout_frame.rows, layout_frame.cols, layout_frame.display_name,
+            )
+            keys = renderer.render_frame(layout_frame)
+
         return web.json_response({
-            "display_name": frame.display_name,
-            "rows": frame.rows,
-            "cols": frame.cols,
+            "display_name": layout_frame.display_name,
+            "rows": layout_frame.rows,
+            "cols": layout_frame.cols,
             "keys": keys,
             "terminal_id": terminal_id,
         })

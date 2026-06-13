@@ -117,27 +117,18 @@ class VibeDeckSupervisor:
         # Restore pool from autosave
         self._engine.pool_restore()
 
-        # 0a. Create shared AnimationEngine + load sprite clips
-        from ..render.animation import AnimationEngine
-        from ..render.animation_loader import load_clips
-        from ..render.hardware import KEY_SIZE as HW_KEY_SIZES
-        anim_engine = AnimationEngine()
-        # Load sprite clips from assets if present
-        assets_dir = Path(__file__).parent.parent / "assets"
-        all_key_sizes = [sz for sz in set(HW_KEY_SIZES.values()) if sz[0] > 0 and sz[1] > 0]
-        clips = load_clips(assets_dir, all_key_sizes)
-        for name, clip in clips.items():
-            anim_engine.register_clip(clip)
-        if clips:
-            log.info("Animation engine: %d clip(s) loaded", len(clips))
-        self._anim_engine = anim_engine
+        # 0a. Create PIL Renderer (shared for all terminals)
+        from ..render.renderer import PILRenderer
+        self._renderer = PILRenderer()
+        self._anim_engine = self._renderer._anim  # for web server SSE / compat
 
         # 1. Start Web Server (first so we can show status early)
         from ..web.server import VibeDeckWebServer
         self._web_server = VibeDeckWebServer(
             self._engine, self._registry, port=self._port, expose=self._expose, bus=self._bus,
             shutdown_cb=lambda: self._shutdown_event.set(),
-            animation_engine=anim_engine,
+            animation_engine=self._anim_engine,
+            renderer=self._renderer,
         )
         await self._web_server.start()
 
@@ -199,50 +190,43 @@ class VibeDeckSupervisor:
         log.info("Connectors started (scanner + file watcher)")
 
     async def _start_renderer(self) -> None:
-        """Start the appropriate render target."""
+        """Start the appropriate transport target."""
         if self._no_physical:
             log.info("Physical terminal disabled (--no-physical)")
             self._render = "sim"
 
-        anim_engine = self._anim_engine  # created during start()
-
         if self._render == "hardware":
-            from ..render.hardware import HardwareRenderer
-            self._renderer = HardwareRenderer(
+            from ..transport.hid import HIDTransport
+
+            # Thread-safe key callback → message bus bridge
+            _loop = asyncio.get_running_loop()
+
+            def _on_key(key_index: int, pressed: bool) -> None:
+                tid = self._engine.list_terminals()[0] if self._engine.list_terminals() else "default"
+                asyncio.run_coroutine_threadsafe(
+                    self._bus.publish(Message(
+                        type=MessageType.KEY_PRESSED,
+                        source="hardware",
+                        payload={"key": key_index, "pressed": pressed, "terminal_id": tid},
+                    )),
+                    _loop,
+                )
+
+            self._hid = HIDTransport(
                 device_index=self._device_index,
-                animation_engine=anim_engine,
+                key_callback=_on_key,
             )
-            if self._renderer.open():
-                log.info("Hardware renderer started: %s (%s)", self._renderer.deck_type, self._renderer.grid_name)
-
-                # Register key callback → route physical key presses to message bus.
-                # The Stream Deck library calls this from a background thread,
-                # so we must use run_coroutine_threadsafe to post to the event loop.
-                _loop = asyncio.get_running_loop()
-
-                def _on_key(key_index: int, pressed: bool) -> None:
-                    tid = self._engine.list_terminals()[0] if self._engine.list_terminals() else "default"
-                    asyncio.run_coroutine_threadsafe(
-                        self._bus.publish(Message(
-                            type=MessageType.KEY_PRESSED,
-                            source="hardware",
-                            payload={"key": key_index, "pressed": pressed, "terminal_id": tid},
-                        )),
-                        _loop,
-                    )
-
-                self._renderer.set_key_callback(_on_key)
-
+            if self._hid.open():
+                log.info("HID transport started: %s (%d keys)",
+                         self._hid.deck_type, self._hid.key_count)
                 # Hot-plug monitor
-                self._tasks.append(asyncio.create_task(self._renderer.hotplug_loop()))
+                self._tasks.append(asyncio.create_task(self._hid.hotplug_loop()))
             else:
-                log.warning("Hardware renderer failed to open. Falling back to sim.")
+                log.warning("HID transport failed to open. Falling back to sim-only.")
                 self._render = "sim"
 
         if self._render == "sim":
-            from ..render.sim import SimRenderer
-            self._renderer = SimRenderer(animation_engine=anim_engine)
-            log.info("Sim renderer ready")
+            log.info("Web transport ready (PILRenderer → SSE)")
 
     async def _frame_push_loop(self) -> None:
         """Adaptive frame-rate push loop.
@@ -281,18 +265,29 @@ class VibeDeckSupervisor:
                 }
 
                 for terminal_id in self._engine.list_terminals():
-                    frame = self._engine.get_frame(terminal_id)
-                    if frame is None:
+                    layout_frame = self._engine.get_frame(terminal_id)
+                    if layout_frame is None:
                         continue
-                    await self._web_server.broadcast_frame(terminal_id, frame, debug_info)
-                    if self._render == "hardware" and hasattr(self, '_renderer'):
-                        if hasattr(self._renderer, 'render_frame'):
-                            # Only push the physical terminal to hardware;
-                            # virtual terminals are web-only.
-                            t_info = self._registry.get_by_id(terminal_id) if self._registry else None
-                            is_physical = t_info and t_info.type == "physical"
-                            if is_physical:
-                                self._renderer.render_frame(frame)
+
+                    # 1. Render: LayoutFrame → StandardFrame (device-independent)
+                    sf = self._renderer.render(layout_frame)
+
+                    # 2. Web: StandardFrame → SSE (all terminals)
+                    from ..transport.web import web_frame as _web_frame
+                    await self._web_server.broadcast_frame(
+                        terminal_id,
+                        frame=_web_frame(sf),
+                        layout_frame=layout_frame,
+                        debug_info=debug_info,
+                    )
+
+                    # 3. HID: StandardFrame → Stream Deck (physical only)
+                    if self._render == "hardware" and hasattr(self, '_hid'):
+                        t_info = self._registry.get_by_id(terminal_id) if self._registry else None
+                        is_physical = t_info and t_info.type == "physical"
+                        if is_physical:
+                            self._hid.push(sf)
+
                 await asyncio.sleep(interval)
         except asyncio.CancelledError:
             pass
@@ -808,10 +803,10 @@ class VibeDeckSupervisor:
             except Exception:
                 log.debug("Web server stop error (ignored)", exc_info=True)
 
-        # ── 7. Close hardware renderer ─────────────────
-        if hasattr(self, '_renderer') and hasattr(self._renderer, 'close'):
+        # ── 7. Close HID transport ──────────────────────
+        if hasattr(self, '_hid') and hasattr(self._hid, 'close'):
             try:
-                self._renderer.close()
+                self._hid.close()
             except Exception:
                 pass
 

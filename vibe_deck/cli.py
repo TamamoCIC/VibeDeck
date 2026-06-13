@@ -553,8 +553,8 @@ def cmd_config(args):
 
 def cmd_info(args):
     """Show Stream Deck device info."""
-    from .render.hardware import HardwareRenderer
-    decks = HardwareRenderer.discover()
+    from .transport.hid import HIDTransport
+    decks = HIDTransport.discover()
     if not decks:
         print("⚠️  No Stream Deck devices detected.")
         print("   Check USB connection and udev rules: sudo cp rules /etc/udev/rules.d/")
