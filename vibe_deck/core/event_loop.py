@@ -559,15 +559,47 @@ class VibeDeckSupervisor:
 
         elif msg.type == MessageType.KEY_PRESSED:
             key = msg.payload.get("key", -1)
+            pressed = msg.payload.get("pressed", True)
+            if not pressed:
+                return  # only act on press, not release
+
             log.info("[KEY] Key %d pressed on terminal %r", key, terminal_id)
             frame = self._engine.get_frame(terminal_id)
-            if frame:
-                ws = frame.get_widget_at(key)
-                if ws:
-                    log.info("[KEY] Widget %s at key %d — current state: icon=%s label=%s",
-                             ws.id, key, ws.display.icon, ws.display.label)
-                else:
-                    log.info("[KEY] No widget at key %d on terminal %r", key, terminal_id)
+            if frame is None:
+                return
+
+            ws = frame.get_widget_at(key)
+            if ws is None:
+                log.info("[KEY] No widget at key %d on terminal %r", key, terminal_id)
+                return
+
+            log.info("[KEY] Widget %s at key %d — icon=%s label=%s",
+                     ws.id, key, ws.display.icon, ws.display.label)
+
+            # ── Resolve PID ────────────────────────────
+            pid = ws.meta.get("pid", 0)
+            if not pid:
+                import re as _re
+                _m = _re.search(r"-(\d+)$", ws.id)
+                if _m:
+                    pid = int(_m.group(1))
+
+            if not pid:
+                log.info("[KEY] No PID for widget %s — skipping focus toggle", ws.id)
+                return
+
+            # ── Toggle window focus (Win32 call → run in executor) ──
+            from ..platform import toggle_window_by_pid
+
+            async def _focus():
+                try:
+                    loop = asyncio.get_running_loop()
+                    result = await loop.run_in_executor(None, toggle_window_by_pid, pid)
+                    log.info("[KEY] focus toggle pid=%d → %s", pid, result.get("action", "?"))
+                except Exception:
+                    log.exception("[KEY] focus toggle failed for pid=%d", pid)
+
+            asyncio.create_task(_focus())
 
         elif msg.type == MessageType.WIDGET_REMOVED:
             agent_name = msg.payload.get("agent_name", "unknown")
