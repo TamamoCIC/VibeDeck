@@ -96,6 +96,8 @@ _user32.AttachThreadInput.restype = wintypes.BOOL
 
 _user32.BringWindowToTop.argtypes = [wintypes.HWND]
 _user32.BringWindowToTop.restype = wintypes.BOOL
+_user32.SetFocus.argtypes = [wintypes.HWND]
+_user32.SetFocus.restype = wintypes.HWND
 
 _user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND,
                                               ctypes.POINTER(wintypes.DWORD)]
@@ -587,56 +589,88 @@ class WindowsBackend:
         finally:
             _user32.AttachThreadInput(my_tid, fg_tid, False)
 
-    def _try_switch_direct(self, hwnd: int) -> bool:
-        """Use ``SwitchToThisWindow`` as a standalone strategy."""
+    def _try_switch_direct(self, hwnd: int, alt_tab: bool = False) -> bool:
+        """Use ``SwitchToThisWindow`` as a standalone strategy.
+
+        *alt_tab*=False is the safe default — it switches without
+        simulating Alt+Tab, so other maximized windows are unaffected.
+        Only pass ``True`` as a desperate last resort (known to
+        un-maximize unrelated windows on Windows 11).
+        """
         _user32.ShowWindow(hwnd, SW_RESTORE)
-        _user32.SwitchToThisWindow(hwnd, True)
+        _user32.SwitchToThisWindow(hwnd, alt_tab)
         _kernel32.Sleep(50)
         result = (_user32.GetForegroundWindow() == hwnd)
-        log.info("_try_switch_direct hwnd=%d ok=%d", hwnd, result)
+        log.info("_try_switch_direct hwnd=%d alt_tab=%s ok=%d", hwnd, alt_tab, result)
         return result
 
+    def _try_gentle_focus(self, hwnd: int) -> bool:
+        """Gentle focus: SetForegroundWindow + BringWindowToTop + SetFocus.
+
+        No AltTab simulation, no thread attachment tricks — just the
+        standard Win32 focus APIs.  Safe to call without side effects.
+        """
+        try:
+            _user32.BringWindowToTop(hwnd)
+            _user32.SetForegroundWindow(hwnd)
+            _user32.SetFocus(hwnd)
+            _kernel32.Sleep(30)
+            return _user32.GetForegroundWindow() == hwnd
+        except Exception:
+            return False
+
     def _bring_to_foreground(self, hwnd: int) -> bool:
-        """Bring *hwnd* to the foreground with 7-strategy cascade."""
+        """Bring *hwnd* to the foreground with a multi-strategy cascade.
+
+        Strategies are ordered from gentlest (no side effects) to most
+        aggressive (may affect other windows).  Each strategy is only
+        tried if the previous one failed.
+        """
         title = self._window_title(hwnd)
 
         if self._is_window_minimized(hwnd):
             _user32.ShowWindow(hwnd, SW_RESTORE)
 
-        # Strategy 1: SwitchToThisWindow (most reliable on Win11)
-        if self._try_switch_direct(hwnd):
-            log.info("_bring_to_foreground [switch-direct] hwnd=%d title=%r ✓", hwnd, title)
+        # Strategy 1: Gentle focus — no side effects
+        if self._try_gentle_focus(hwnd):
+            log.info("_bring_to_foreground [gentle] hwnd=%d title=%r ✓", hwnd, title)
             return True
-        log.info("_bring_to_foreground [switch-direct] hwnd=%d ✗", hwnd)
+        log.info("_bring_to_foreground [gentle] hwnd=%d ✗", hwnd)
 
-        # Strategy 2: Alt-spoof via keybd_event
+        # Strategy 2: SwitchToThisWindow without AltTab — safe
+        if self._try_switch_direct(hwnd, alt_tab=False):
+            log.info("_bring_to_foreground [switch-safe] hwnd=%d title=%r ✓", hwnd, title)
+            return True
+        log.info("_bring_to_foreground [switch-safe] hwnd=%d ✗", hwnd)
+
+        # Strategy 3: Alt-spoof via keybd_event
         if self._try_alt_spoof_vk(hwnd):
             log.info("_bring_to_foreground [alt-spoof-vk] hwnd=%d title=%r ✓", hwnd, title)
             return True
         log.info("_bring_to_foreground [alt-spoof-vk] hwnd=%d ✗", hwnd)
 
-        # Strategy 3: AttachThreadInput + TOPMOST
+        # Strategy 4: AttachThreadInput + TOPMOST
         if self._try_attach_thread(hwnd):
             log.info("_bring_to_foreground [attach-thread] hwnd=%d ✓", hwnd)
             return True
         log.info("_bring_to_foreground [attach-thread] hwnd=%d ✗", hwnd)
 
-        # Strategy 4: Alt-spoof via SendInput
+        # Strategy 5: Alt-spoof via SendInput
         if self._try_alt_spoof(hwnd):
             log.info("_bring_to_foreground [alt-spoof-sc] hwnd=%d title=%r ✓", hwnd, title)
             return True
         log.info("_bring_to_foreground [alt-spoof-sc] hwnd=%d ✗", hwnd)
 
-        # Strategy 5: TOPMOST jolt standalone
+        # Strategy 6: TOPMOST jolt standalone
         if self._try_topmost_trick(hwnd):
             log.info("_bring_to_foreground [topmost-jolt] hwnd=%d ✓", hwnd)
             return True
         log.info("_bring_to_foreground [topmost-jolt] hwnd=%d ✗", hwnd)
 
-        # Strategy 6: Retry after foreground-lock reset
+        # Strategy 7: Retry after foreground-lock cooldown
         _kernel32.Sleep(400)
-        if self._try_switch_direct(hwnd):
-            log.info("_bring_to_foreground [switch-direct-2] hwnd=%d ✓", hwnd)
+        if self._try_switch_direct(hwnd, alt_tab=False):
+            log.info("_bring_to_foreground [switch-safe-2] hwnd=%d ✓", hwnd)
             return True
         if self._try_alt_spoof_vk(hwnd):
             log.info("_bring_to_foreground [alt-spoof-vk-2] hwnd=%d ✓", hwnd)
@@ -646,7 +680,22 @@ class WindowsBackend:
             return True
         log.info("_bring_to_foreground [post-cooldown] hwnd=%d ✗", hwnd)
 
-        # Strategy 7: Flash taskbar (last resort)
+        # Strategy 8: SwitchToThisWindow WITH AltTab — DESPERATE LAST RESORT.
+        # This CAN un-maximize other windows on Windows 11, but it's the
+        # most reliable way to force a window to foreground when all else
+        # fails.  Only reached after every gentle strategy has been tried.
+        log.warning("_bring_to_foreground: trying AltTab switch as last resort "
+                    "(may un-maximize other windows)")
+        try:
+            _user32.ShowWindow(hwnd, SW_RESTORE)
+            _user32.SwitchToThisWindow(hwnd, True)
+            if _user32.GetForegroundWindow() == hwnd:
+                log.info("_bring_to_foreground [switch-altab] hwnd=%d ✓", hwnd)
+                return True
+        except Exception:
+            pass
+
+        # Strategy 9: Flash taskbar — absolute final fallback
         fw = FLASHWINFO()
         fw.cbSize = ctypes.sizeof(FLASHWINFO)
         fw.hwnd = hwnd
@@ -654,15 +703,6 @@ class WindowsBackend:
         fw.uCount = 0
         fw.dwTimeout = 0
         _user32.FlashWindowEx(ctypes.byref(fw))
-
-        try:
-            _user32.ShowWindow(hwnd, SW_RESTORE)
-            _user32.SwitchToThisWindow(hwnd, True)
-            if _user32.GetForegroundWindow() == hwnd:
-                log.info("_bring_to_foreground [switch-flash] hwnd=%d ✓", hwnd)
-                return True
-        except Exception:
-            pass
 
         log.warning("_bring_to_foreground: all strategies failed — "
                     "taskbar flashing for %r", title)
