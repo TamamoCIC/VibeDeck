@@ -109,6 +109,24 @@ The vocabulary a Widget can use to express itself on a single key (72×72 to 96�
 
 Adapters produce these primitives. VibeDeck renders them. Adapters don't produce raw images — they declare what to show.
 
+### Layer
+
+A composable rendering module that produces one visual element of a key image. Each Layer is an independent function: it receives a `DisplayState`, key dimensions, and a timestamp, and returns an RGBA image (or `None` if inactive). Layers are stacked in z-order to build the final key image:
+
+```
+Backdrop → Sprite → Icon → Label → Badge → Effect
+```
+
+Layers are declared per-adapter in `adapter.yaml`. Community contributors can design new visual styles by composing existing layers — no Python code required. See [ADR 0002](docs/adr/0002-standard-frame-pipeline.md).
+
+### Standard Frame
+
+A device-independent, fully-rendered snapshot of a Terminal at one moment. Every key is a pair of encoded image bytes (JPEG for embedded devices, PNG for high-quality consumers). The Standard Frame is the universal currency between the PIL Renderer and all Transports — it contains no rendering logic, no text to be composed, just final bytes ready to push.
+
+### Transport
+
+A thin output adapter that consumes a `StandardFrame` and delivers it to a specific device or protocol. A Transport does not render text, draw shapes, or composite layers — it only handles device-specific encoding differences (e.g. image flipping for Stream Deck XL) and delivery (USB HID, SSE, WebSocket). See [ADR 0002](docs/adr/0002-standard-frame-pipeline.md).
+
 ## Runtime Architecture
 
 VibeDeck runs as a **systemd daemon** (`systemctl enable vibe-deck`) — always on, always watching. It is structured in three layers:
@@ -117,7 +135,7 @@ VibeDeck runs as a **systemd daemon** (`systemctl enable vibe-deck`) — always 
 |---|---|
 | **Core Daemon** | Lifecycle supervisor. Owns the asyncio event loop, message routing, layout engine, and the Web API (Web editor + external connector endpoints). |
 | **Connectors** | Bridge external Agent state into the core. Each connector is an independent asyncio task: Process Scanner polls `/proc`, File Watcher uses inotify, WS/SSE Clients maintain persistent connections. Connectors push into internal message queues. |
-| **Render Engine** | Consumes display instructions from the core and drives connected Terminals (Pillow → key images, brightness, animations). Each Terminal type has its own render adapter. |
+| **Render Engine** | Composes `DisplayState` primitives into `StandardFrame` bitmaps via a stack of independent `Layer` objects, then dispatches to `Transport` adapters. See [ADR 0002](docs/adr/0002-standard-frame-pipeline.md). |
 
 Inter-layer communication uses **asyncio message queues** within a single Python process for v0.1. This avoids external IPC dependencies while keeping concerns separated. Later versions may split Connectors or Render Engine into separate processes via Unix domain sockets.
 
