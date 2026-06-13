@@ -462,7 +462,12 @@ class LayoutEngine:
             log.exception("Failed to autosave pool")
 
     def pool_restore(self) -> None:
-        """Restore pool widgets from ``_autosave-pool.yaml`` on startup."""
+        """Restore pool widgets from ``_autosave-pool.yaml`` on startup.
+
+        Only widgets whose agent process is still alive are restored —
+        zombie widgets from dead sessions are skipped so the pool stays
+        clean across daemon restarts.
+        """
         from ..config import LAYOUTS_DIR
         from .types import DisplayState, WidgetState, WidgetType
 
@@ -470,11 +475,37 @@ class LayoutEngine:
         if not path.exists():
             return
         try:
+            import psutil
+            _has_psutil = True
+        except ImportError:
+            _has_psutil = False
+
+        try:
             import yaml as _yaml
+            import re as _re
+
             data = _yaml.safe_load(path.read_text(encoding="utf-8"))
             if not data or "widgets" not in data:
                 return
+
+            skipped = 0
             for wd in data["widgets"]:
+                # Extract PID from widget_id (format: "agent-name-12345")
+                pid = wd.get("meta", {}).get("pid", 0)
+                if not pid:
+                    _m = _re.search(r"-(\d+)$", wd["id"])
+                    if _m:
+                        pid = int(_m.group(1))
+
+                # Skip dead agents — pool should only contain live widgets
+                if pid and _has_psutil:
+                    try:
+                        if not psutil.pid_exists(pid):
+                            skipped += 1
+                            continue
+                    except Exception:
+                        pass  # can't verify → keep it
+
                 ws = WidgetState(
                     id=wd["id"],
                     type=WidgetType(wd.get("type", "agent")),
@@ -493,6 +524,11 @@ class LayoutEngine:
                 # Keep sprite from saved state (update_display doesn't touch sprite)
                 ws.display.sprite = wd.get("sprite", "none")
                 self._pool[ws.id] = ws
-            log.info("Pool restored: %d widget(s)", len(self._pool))
+
+            if skipped:
+                log.info("Pool restored: %d widget(s) (%d dead skipped)",
+                         len(self._pool), skipped)
+            else:
+                log.info("Pool restored: %d widget(s)", len(self._pool))
         except Exception:
             log.exception("Failed to restore pool from %s", path)

@@ -67,6 +67,8 @@ class VibeDeckWebServer:
         self._runner: web.AppRunner | None = None
         # Per-terminal SSE subscribers: terminal_id → list[StreamResponse]
         self._clients: dict[str, list[web.StreamResponse]] = {}
+        # Legacy SimRenderer cache (used only when PILRenderer is unavailable)
+        self._renderers: dict[str, "SimRenderer"] = {}
 
         # Routes
         self._app.router.add_get("/", self._index)

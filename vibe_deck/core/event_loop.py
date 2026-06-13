@@ -219,6 +219,23 @@ class VibeDeckSupervisor:
             if self._hid.open():
                 log.info("HID transport started: %s (%d keys)",
                          self._hid.deck_type, self._hid.key_count)
+
+                # Sync hardware identity → terminal registry
+                deck_type = self._hid.deck_type
+                grid = self._hid.key_count
+                if self._registry:
+                    phys = self._registry.get_by_id("default")
+                    if phys and phys.type == "physical":
+                        phys.name = deck_type
+                        phys.grid = f"{grid // 8}x{8 if grid >= 32 else 5}" if grid >= 15 else f"{3}x{grid // 3}"
+                        # Derive actual grid from known mappings
+                        _grid_map = {
+                            32: "4x8", 15: "3x5", 6: "3x2", 8: "2x4", 3: "1x3",
+                        }
+                        phys.grid = _grid_map.get(grid, f"{grid // 4}x4")
+                        self._registry.save()
+                        log.info("Terminal 'default' → %r (%s)", deck_type, phys.grid)
+
                 # Hot-plug monitor
                 self._tasks.append(asyncio.create_task(self._hid.hotplug_loop()))
             else:
@@ -478,8 +495,16 @@ class VibeDeckSupervisor:
             log.info("[HOOK→UI] display resolved → icon=%s color=%s anim=%s label=%s",
                      ds.icon, ds.color, ds.animation, ds.label)
 
-            # Keep pool in sync with the latest display state
-            pool_ws = WidgetState(id=widget_id, type=WidgetType.AGENT, display=ds, meta=data)
+            # Keep pool in sync with the latest display state.
+            # Preserve PID from the existing pool widget — hook event
+            # payloads don't carry it, and losing it breaks pool-restore
+            # dead-PID filtering + window focus toggle.
+            pool_meta = dict(data)
+            if "pid" not in pool_meta:
+                existing_pool = self._engine.pool_get(widget_id)
+                if existing_pool and existing_pool.meta.get("pid"):
+                    pool_meta["pid"] = existing_pool.meta["pid"]
+            pool_ws = WidgetState(id=widget_id, type=WidgetType.AGENT, display=ds, meta=pool_meta)
             if _is_hook_event:
                 import time as _ptime
                 pool_ws._last_hook_ts = _ptime.time()
