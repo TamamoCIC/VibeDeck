@@ -346,11 +346,6 @@ class HardwareRenderer:
             return
 
         size = self.key_size
-        native_fmt = (
-            self._deck.key_image_format()
-            if hasattr(self._deck, "key_image_format")
-            else None
-        )
         now = _time_mod.monotonic()
 
         for i, widget_id in enumerate(frame.keymap):
@@ -373,12 +368,14 @@ class HardwareRenderer:
             if img.size != size:
                 img = img.resize(size, Image.LANCZOS)
 
-            # Convert to native format and push
-            if native_fmt:
-                native_fmt.convert(img)
+            # Push raw bytes to hardware.
+            # Note: key_image_format() returns a dict in newer streamdeck
+            # lib versions, not an object with .convert().  set_key_image
+            # handles format conversion internally.
+            try:
                 self._deck.set_key_image(i, img.tobytes())
-            else:
-                self._deck.set_key_image(i, img.tobytes())
+            except Exception:
+                pass
 
     def set_brightness(self, percent: int) -> None:
         """Set panel brightness (0-100)."""
