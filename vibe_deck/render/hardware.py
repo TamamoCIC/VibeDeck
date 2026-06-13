@@ -225,6 +225,100 @@ class HardwareRenderer:
 
     # ── Key Image Rendering ───────────────────────
 
+    def _draw_icon_shape(
+        draw: ImageDraw.ImageDraw, icon: str, w: int, h: int
+    ) -> None:
+        """Draw a geometric icon shape to replace emoji that PIL can't render.
+
+        Maps common VibeDeck emoji icons to clean PIL vector shapes.
+        All shapes are filled white, sized relative to the key dimensions.
+        """
+        cx, cy = w // 2, h // 2
+        r = min(w, h) // 5          # radius for circles
+        rr = r + 2                   # slightly larger for outer rings
+
+        # ── Filled circle → Running / Thinking / Idle ──
+        if icon in ("🐙",):
+            draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill="white")
+            return
+
+        # ── Empty circle → Offline ──
+        if icon in ("⚫",):
+            draw.ellipse([cx - rr, cy - rr, cx + rr, cy + rr],
+                         outline="white", width=2)
+            return
+
+        # ── Warning triangle → Error / Warning ──
+        if icon in ("⚠️",):
+            import math
+            ir = r + 3
+            pts = [
+                (cx, cy - ir),
+                (cx - int(ir * math.cos(math.pi / 6)), cy + int(ir * math.sin(math.pi / 6))),
+                (cx + int(ir * math.cos(math.pi / 6)), cy + int(ir * math.sin(math.pi / 6))),
+            ]
+            draw.polygon(pts, outline="white", width=2)
+            # "!" in center
+            try:
+                ex_font = _load_font(r, prefer_emoji=False)
+                draw.text((cx - 4, cy - r // 2 - 2), "!", fill="white", font=ex_font)
+            except Exception:
+                pass
+            return
+
+        # ── Question mark → Asking... ──
+        if icon in ("❓",):
+            try:
+                q_font = _load_font(rr * 2, prefer_emoji=False)
+                draw.text((cx - rr // 2 - 2, cy - rr), "?", fill="white", font=q_font)
+            except Exception:
+                draw.ellipse([cx - rr, cy - rr, cx + rr, cy + rr],
+                             outline="white", width=2)
+            return
+
+        # ── Shield → Approval needed ──
+        if icon in ("🛡️",):
+            pts = [
+                (cx, cy - r - 3),
+                (cx + r + 3, cy - r // 2),
+                (cx + r + 3, cy + r // 2),
+                (cx, cy + r + 3),
+                (cx - r - 3, cy + r // 2),
+                (cx - r - 3, cy - r // 2),
+            ]
+            draw.polygon(pts, outline="white", width=2)
+            return
+
+        # ── Double bars → Paused ──
+        if icon in ("⏸️", "⏸",):
+            bar_w = max(3, r // 2)
+            bar_h = r * 2
+            gap = r // 2
+            draw.rectangle([cx - gap - bar_w, cy - r, cx - gap, cy + r], fill="white")
+            draw.rectangle([cx + gap, cy - r, cx + gap + bar_w, cy + r], fill="white")
+            return
+
+        # ── Star / sparkle → New / Starting ──
+        if icon in ("🆕",):
+            try:
+                s_font = _load_font(rr * 2, prefer_emoji=False)
+                draw.text((cx - rr, cy - rr), "+", fill="white", font=s_font)
+            except Exception:
+                draw.ellipse([cx - rr, cy - rr, cx + rr, cy + rr],
+                             outline="white", width=2)
+            return
+
+        # ── Fallback: try font glyph, then simple circle ──
+        try:
+            fallback_font = _load_font(rr * 2, prefer_emoji=True)
+            bbox = draw.textbbox((0, 0), icon, font=fallback_font)
+            tw = bbox[2] - bbox[0]
+            th = bbox[3] - bbox[1]
+            draw.text((cx - tw // 2, cy - th // 2), icon, fill="white", font=fallback_font)
+        except Exception:
+            draw.ellipse([cx - rr, cy - rr, cx + rr, cy + rr],
+                         outline="white", width=2)
+
     def _render_key_image(
         self,
         ws: WidgetState,
@@ -271,22 +365,11 @@ class HardwareRenderer:
         draw = ImageDraw.Draw(img)
 
         # ── Step 2: Icon (only on non-sprite base) ──
+        # Render geometric shapes instead of emoji font glyphs —
+        # PIL can't render color emoji (Segoe UI Emoji only exposes
+        # monochrome outlines), so we draw clean PIL vector shapes.
         if not is_sprite and display.icon:
-            icon = display.icon
-            icon_font_size = min(w, h) // 3
-            icon_font = _load_font(icon_font_size, prefer_emoji=True)
-            try:
-                icon_bbox = draw.textbbox((0, 0), icon, font=icon_font)
-            except Exception:
-                icon_bbox = (0, 0, icon_font_size, icon_font_size)
-            icon_w = icon_bbox[2] - icon_bbox[0]
-            icon_h = icon_bbox[3] - icon_bbox[1]
-            icon_x = (w - icon_w) // 2
-            icon_y = (h - icon_h) // 2 - 5
-            try:
-                draw.text((icon_x, icon_y), icon, fill="white", font=icon_font)
-            except Exception:
-                pass
+            _draw_icon_shape(draw, display.icon, w, h)
 
         # ── Step 3: Label at bottom ────────────
         if display.label:
@@ -301,17 +384,9 @@ class HardwareRenderer:
                     l_bbox = (0, 0, label_font_size * len(line), label_font_size)
                 l_w = l_bbox[2] - l_bbox[0]
                 l_x = (w - l_w) // 2
-                # Semi-transparent background bar for readability.
-                # Half the key width so it sits behind text only.
-                bar_h = label_font_size + 4
-                bar_w = l_w + 8
-                bar_x = (w - bar_w) // 2
-                bar_y = y_offset - 2
+                # Text shadow for readability (no heavy black rectangle)
                 try:
-                    draw.rectangle(
-                        [bar_x, bar_y, bar_x + bar_w, bar_y + bar_h],
-                        fill=(0, 0, 0),
-                    )
+                    draw.text((l_x + 1, y_offset + 1), line, fill=(0, 0, 0), font=label_font)
                 except Exception:
                     pass
                 try:
@@ -324,7 +399,7 @@ class HardwareRenderer:
         if display.badge:
             badge_text = display.badge
             badge_size = min(w, h) // 4
-            badge_font = _default_font(badge_size)
+            badge_font = _load_font(badge_size, prefer_emoji=False)
             try:
                 b_bbox = draw.textbbox((0, 0), badge_text, font=badge_font)
             except Exception:
