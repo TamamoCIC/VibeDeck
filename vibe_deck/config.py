@@ -187,6 +187,7 @@ class VibeDeckConfig:
     terminals: list[TerminalInfo] = field(default_factory=list)
     timing: TimingConfig = field(default_factory=TimingConfig)
     adapter_configs: list[AdapterConfig] = field(default_factory=list)
+    auto_enter_approval: bool = False
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "VibeDeckConfig":
@@ -209,6 +210,7 @@ class VibeDeckConfig:
             adapter_configs=[
                 AdapterConfig.from_dict(a) for a in d.get("adapter_configs", [])
             ],
+            auto_enter_approval=d.get("auto_enter_approval", False),
         )
 
 
@@ -291,6 +293,7 @@ def save_config(config: VibeDeckConfig, path: Path | None = None) -> None:
         "terminals": [t.to_dict() for t in config.terminals],
         "timing": config.timing.to_dict(),
         "adapter_configs": [a.to_dict() for a in config.adapter_configs],
+        "auto_enter_approval": config.auto_enter_approval,
     }
 
     with open(config_path, "w", encoding="utf-8") as f:

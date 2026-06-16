@@ -74,6 +74,12 @@ class LinuxBackend:
         """TODO: Enumerate via _NET_CLIENT_LIST or wmctrl."""
         return None
 
+    # ── Keystroke injection (TODO) ─────────────────────────
+
+    def send_keys(self, pid: int, text: str) -> dict:
+        """TODO: Implement via xdotool type or similar."""
+        return {"action": "error", "message": "send_keys not implemented on Linux"}
+
     # ── Process tools (/proc-based, no external deps) ─────
 
     def get_parent_pid(self, pid: int) -> int | None:

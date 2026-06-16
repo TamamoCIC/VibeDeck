@@ -1078,7 +1078,7 @@ function handleHash() {
   if (hash === 'settings') {
     if (settingsFrame) {
       settingsFrame.style.display = '';
-      settingsFrame.src = '/static/settings.html';
+      settingsFrame.src = '/static/settings.html?t=' + Date.now();
     }
   } else if (hash === 'wizard') {
     if (wizard) wizard.style.display = '';

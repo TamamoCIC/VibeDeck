@@ -163,8 +163,12 @@ SWP_SHOWWINDOW = 0x0040
 LSFW_LOCK = 1
 LSFW_UNLOCK = 2
 
-# Virtual key code
+# Virtual key codes
 VK_MENU = 0x12
+VK_RETURN = 0x0D
+VK_SHIFT = 0x10
+VK_Y = 0x59
+VK_N = 0x4E
 
 # ── Terminal window class whitelist ────────────────────
 _TERMINAL_CLASSES: set[str] = {
@@ -331,6 +335,88 @@ class WindowsBackend:
         _user32.ShowWindow(agent_hwnd, 6)  # SW_MINIMIZE
         log.info("Toggle: minimised agent pid=%d (no saved window or self-loop)", pid)
         return {"action": "minimised", "pid": pid}
+
+    def send_keys(self, pid: int, text: str) -> dict:
+        """Type *text* into the terminal window for *pid*.
+
+        Finds the window for *pid*, brings it to the foreground, then
+        sends each character via ``keybd_event``.  Only handles ASCII
+        printable characters plus ``\\n`` (Enter).  The window stays in
+        the foreground after sending — the user can see the agent's response.
+
+        Returns ``{"action": "sent", "text": text}`` on success, or an
+        error dict on failure.
+        """
+        if pid <= 0 or not text:
+            return {"action": "error", "message": "invalid pid or empty text"}
+
+        chain = self.ancestor_pids(pid)
+        hwnd = self._get_cached_hwnd(pid) or self._find_window(chain)
+        if hwnd is None:
+            return {"action": "error",
+                    "message": f"no window found for PID {pid}"}
+
+        # Bring window to foreground so keystrokes land in the right place.
+        if not self._bring_to_foreground(hwnd):
+            return {"action": "error",
+                    "message": f"could not focus window for PID {pid}"}
+
+        # Brief delay — let the window thread accept input
+        _kernel32.Sleep(60)
+
+        for char in text:
+            if char == '\n':
+                vk = VK_RETURN
+            elif char == '\r':
+                continue
+            elif char == '\t':
+                vk = 0x09  # VK_TAB
+            elif 'A' <= char <= 'Z':
+                # Uppercase letter: hold Shift
+                _user32.keybd_event(VK_SHIFT, 0, 0, 0)
+                _kernel32.Sleep(1)
+                vk = ord(char)
+            elif 'a' <= char <= 'z':
+                # Lowercase letter: just the VK code (no Shift)
+                vk = ord(char.upper())
+            elif char in "0123456789":
+                vk = ord(char)
+            elif char == ' ':
+                vk = 0x20  # VK_SPACE
+            elif char == '.':
+                vk = 0xBE
+            elif char == '-':
+                vk = 0xBD
+            elif char == '/':
+                vk = 0xBF
+            elif char == ':':
+                _user32.keybd_event(VK_SHIFT, 0, 0, 0)
+                _kernel32.Sleep(1)
+                vk = 0xBA
+            elif char == '\\':
+                vk = 0xDC
+            elif char == '?':
+                _user32.keybd_event(VK_SHIFT, 0, 0, 0)
+                _kernel32.Sleep(1)
+                vk = 0xBF
+            else:
+                log.debug("send_keys: unsupported char %r — skipping", char)
+                continue
+
+            # Key down
+            _user32.keybd_event(vk, 0, 0, 0)
+            _kernel32.Sleep(5)
+            # Key up
+            _user32.keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
+            _kernel32.Sleep(5)
+
+            # Release Shift if it was held
+            if char in 'AZ:?':
+                _user32.keybd_event(VK_SHIFT, 0, KEYEVENTF_KEYUP, 0)
+                _kernel32.Sleep(1)
+
+        log.info("send_keys: sent %r to pid=%d (hwnd=%d)", text, pid, hwnd)
+        return {"action": "sent", "text": text}
 
     def find_window_title(self, pid: int) -> str | None:
         """Walk from *pid* up the process tree and return the first

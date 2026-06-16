@@ -60,6 +60,14 @@ class WindowManager(Protocol):
         """
         ...
 
+    def send_keys(self, pid: int, text: str) -> dict:
+        """Type *text* into the terminal window for *pid*.
+
+        Returns ``{"action": "sent", "text": text}`` on success, or an
+        error dict on failure.
+        """
+        ...
+
 
 @runtime_checkable
 class ProcessManager(Protocol):

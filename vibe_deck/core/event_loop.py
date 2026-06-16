@@ -88,6 +88,14 @@ class VibeDeckSupervisor:
         self._scanner = None     # ProcessScanner instance (set by _start_connectors)
         self._watcher = None     # FileWatcher instance (set by _start_connectors)
 
+        # ── Approval Level B state ────────────────────────
+        self._approval_mode: bool = False
+        self._approval_active: dict[str, str] = {}         # terminal_id → widget_id
+        self._approval_active_pid: dict[str, int] = {}      # terminal_id → pid
+        self._approval_saved: dict[str, dict[int, str | None]] = {}  # restored keymap slots
+        self._approval_cooldown_until: dict[str, float] = {}  # prevent re-entry loop
+        self._auto_enter_approval: bool = False
+
     # ── Public API ─────────────────────────────────
 
     @property
@@ -121,6 +129,12 @@ class VibeDeckSupervisor:
         from ..render.renderer import PILRenderer
         self._renderer = PILRenderer()
         self._anim_engine = self._renderer._anim  # for web server SSE / compat
+
+        # 0b. Load approval config
+        from ..config import load_config
+        _cfg = load_config()
+        self._auto_enter_approval = _cfg.auto_enter_approval
+        log.info("Approval config: auto_enter=%s", self._auto_enter_approval)
 
         # 1. Start Web Server (first so we can show status early)
         from ..web.server import VibeDeckWebServer
@@ -629,6 +643,22 @@ class VibeDeckSupervisor:
             # Widget stays in pool — user activates on terminals via UI/API.
             # State updates to activated terminals are handled by the loop above.
 
+            # ── Approval resolution detection ──────────────────
+            # If we're in approval mode and the active agent gets a
+            # hook event that isn't PreToolUse/Stop (both are part of
+            # the approval-waiting window), the agent has moved on → exit.
+            if (self._approval_mode
+                    and terminal_id in self._approval_active
+                    and _is_hook_event
+                    and self._approval_active[terminal_id] == widget_id):
+                import time as _ptime3
+                cooldown_end = self._approval_cooldown_until.get(terminal_id, 0)
+                if _ptime3.monotonic() >= cooldown_end:
+                    if _hook_event not in ("PreToolUse", "Stop"):
+                        log.info("[APPROVAL] Agent %s resumed (hook=%s) → exiting approval",
+                                 widget_id, _hook_event)
+                        asyncio.create_task(self._exit_approval_mode(terminal_id))
+
         elif msg.type == MessageType.KEY_PRESSED:
             key = msg.payload.get("key", -1)
             pressed = msg.payload.get("pressed", True)
@@ -640,7 +670,65 @@ class VibeDeckSupervisor:
             if frame is None:
                 return
 
+            cols = frame.cols
+            row = key // cols if cols > 0 else -1
+            col = key % cols if cols > 0 else -1
+
+            # ── Approval Mode routing ────────────────────
+            if self._approval_mode and terminal_id in self._approval_active:
+                if row == 0:
+                    # Agent selector row: switch active target
+                    ws = frame.get_widget_at(key)
+                    if ws and ws.type.value == "agent":
+                        pid = ws.meta.get("pid", 0)
+                        if not pid:
+                            import re as _re_ap
+                            _m = _re_ap.search(r"-(\d+)$", ws.id)
+                            if _m:
+                                pid = int(_m.group(1))
+                        if pid:
+                            log.info("[APPROVAL] Switched target → %s (pid=%d)", ws.id, pid)
+                            asyncio.create_task(
+                                self._enter_approval_mode(terminal_id, ws.id, pid)
+                            )
+                    return
+
+                if row in (1, 2):
+                    pid = self._approval_active_pid.get(terminal_id, 0)
+                    if pid == 0:
+                        log.info("[APPROVAL] No active agent — ignoring key press")
+                        return
+
+                    yes_cols = max(1, cols // 2)
+                    if col < yes_cols:
+                        log.info("[APPROVAL] YES zone pressed for pid=%d", pid)
+                        asyncio.create_task(
+                            self._handle_approval_response(terminal_id, pid, True)
+                        )
+                    else:
+                        log.info("[APPROVAL] NO zone pressed for pid=%d", pid)
+                        asyncio.create_task(
+                            self._handle_approval_response(terminal_id, pid, False)
+                        )
+                return  # Always swallow in approval mode
+
+            # ── Manual approval entry (not in approval mode) ─
             ws = frame.get_widget_at(key)
+            if ws and ws.display.label == "Approval?" and ws.type.value == "agent":
+                pid = ws.meta.get("pid", 0)
+                if not pid:
+                    import re as _re_ap2
+                    _m = _re_ap2.search(r"-(\d+)$", ws.id)
+                    if _m:
+                        pid = int(_m.group(1))
+                if pid:
+                    log.info("[APPROVAL] Manual entry via key press on %s (pid=%d)", ws.id, pid)
+                    asyncio.create_task(
+                        self._enter_approval_mode(terminal_id, ws.id, pid)
+                    )
+                return
+
+            # ── Normal mode: resolve widget & PID ──────────
             if ws is None:
                 log.info("[KEY] No widget at key %d on terminal %r", key, terminal_id)
                 return
@@ -673,6 +761,22 @@ class VibeDeckSupervisor:
 
             asyncio.create_task(_focus())
 
+        elif msg.type == MessageType.LAYOUT_CHANGED:
+            # Force immediate frame push to all renderers (web + physical)
+            # so widget activation/deactivation appears instantly on the device.
+            if hasattr(self, '_web_server') and hasattr(self, '_renderer'):
+                frame = self._engine.get_frame(terminal_id)
+                if frame:
+                    await self._push_rendered_frame(terminal_id, frame)
+                    # Also push to HID immediately if this is a physical terminal
+                    if hasattr(self, '_hid') and self._hid.connected:
+                        from ..transport.web import web_frame as _web_frame
+                        try:
+                            sf = self._renderer.render(frame)
+                            self._hid.push(sf)
+                        except Exception:
+                            log.exception("[LAYOUT] HID force-push failed for %r", terminal_id)
+
         elif msg.type == MessageType.WIDGET_REMOVED:
             agent_name = msg.payload.get("agent_name", "unknown")
             widget_id = msg.payload.get("widget_id", f"{agent_name}-auto")  # -auto fallback for old-format files
@@ -694,7 +798,203 @@ class VibeDeckSupervisor:
         if _is_real_activity:
             import time as _time
             self._last_hook_activity = _time.monotonic()
+            # Clear approval cooldown on fresh hook activity —
+            # the agent is alive, no need to guard against re-entry.
+            if terminal_id in self._approval_cooldown_until:
+                del self._approval_cooldown_until[terminal_id]
             asyncio.create_task(self._reset_thinking_timer(terminal_id))
+
+    # ── Approval Level B ────────────────────────────
+
+    async def _push_rendered_frame(
+        self, terminal_id: str, layout_frame
+    ) -> None:
+        """Render *layout_frame* and push to web clients via SSE."""
+        try:
+            sf = self._renderer.render(layout_frame)
+            from ..transport.web import web_frame as _web_frame
+            await self._web_server.broadcast_frame(
+                terminal_id,
+                frame=_web_frame(sf),
+                layout_frame=layout_frame,
+            )
+        except Exception:
+            log.exception("[FRAME] Failed to push rendered frame for %r", terminal_id)
+
+    async def _enter_approval_mode(
+        self, terminal_id: str, widget_id: str, pid: int
+    ) -> None:
+        """Overlay rows 1-2 with YES/NO zones for the active approval target.
+
+        Saves displaced key slots to ``_approval_saved`` so
+        ``_exit_approval_mode`` can restore them.
+
+        If already in approval mode, just switches the active target.
+        """
+        import time as _ptime
+
+        frame = self._engine.get_frame(terminal_id)
+        if frame is None:
+            return
+
+        # Already in approval mode — just switch active target
+        if self._approval_mode and terminal_id in self._approval_active:
+            self._approval_active[terminal_id] = widget_id
+            self._approval_active_pid[terminal_id] = pid
+            self._update_approval_highlight(terminal_id)
+            log.info("[APPROVAL] Switched active target → %s (pid=%d) on %r",
+                     widget_id, pid, terminal_id)
+            return
+
+        log.info("[APPROVAL] Entering approval mode on %r, agent=%s (pid=%d)",
+                 terminal_id, widget_id, pid)
+
+        from .types import DisplayState, WidgetState, WidgetType
+        cols = frame.cols
+
+        # Save displaced key slots (rows 1-2) for later restoration
+        saved: dict[int, str | None] = {}
+        for idx in range(cols, cols * 3):
+            saved[idx] = frame.keymap[idx] if idx < len(frame.keymap) else None
+        # Clear those slots
+        for idx in saved:
+            if idx < len(frame.keymap):
+                frame.keymap[idx] = None
+
+        # Remove any leftover approval-transient widgets
+        for wid in list(frame.widgets.keys()):
+            if wid.startswith("approval-"):
+                del frame.widgets[wid]
+
+        # Determine YES/NO zone column split
+        yes_cols = max(1, cols // 2)
+
+        # YES zone: rows 1-2, columns 0..yes_cols-1
+        for r in (1, 2):
+            for c in range(yes_cols):
+                idx = r * cols + c
+                yes_ws = WidgetState(
+                    id=f"approval-yes-{terminal_id}-{idx}",
+                    type=WidgetType.APPROVAL,
+                    display=DisplayState(
+                        icon="✅", color="#22c55e",
+                        animation="pulse", label="YES",
+                    ),
+                    meta={"approval_zone": "yes", "terminal_id": terminal_id},
+                )
+                frame.place_widget(yes_ws, idx)
+
+        # NO zone: rows 1-2, columns yes_cols..cols-1
+        for r in (1, 2):
+            for c in range(yes_cols, cols):
+                idx = r * cols + c
+                no_ws = WidgetState(
+                    id=f"approval-no-{terminal_id}-{idx}",
+                    type=WidgetType.APPROVAL,
+                    display=DisplayState(
+                        icon="❌", color="#ef4444",
+                        animation="pulse", label="NO",
+                    ),
+                    meta={"approval_zone": "no", "terminal_id": terminal_id},
+                )
+                frame.place_widget(no_ws, idx)
+
+        # Mark state
+        self._approval_saved[terminal_id] = saved
+        self._approval_active[terminal_id] = widget_id
+        self._approval_active_pid[terminal_id] = pid
+        self._approval_mode = True
+
+        self._update_approval_highlight(terminal_id)
+
+        # Publish
+        await self._bus.publish(Message(
+            type=MessageType.APPROVAL_REQUESTED,
+            source="supervisor",
+            payload={"terminal_id": terminal_id, "widget_id": widget_id, "pid": pid},
+        ))
+
+        # Force push the updated frame immediately
+        if hasattr(self, '_web_server') and hasattr(self, '_renderer'):
+            await self._push_rendered_frame(terminal_id, frame)
+
+        log.info("[APPROVAL] Approval mode active on %r (%d YES keys, %d NO keys)",
+                 terminal_id, yes_cols * 2, (cols - yes_cols) * 2)
+
+    async def _exit_approval_mode(self, terminal_id: str) -> None:
+        """Restore the original layout on *terminal_id*."""
+        import time as _ptime
+
+        if not self._approval_mode:
+            return
+        if terminal_id not in self._approval_saved and terminal_id not in self._approval_active:
+            return
+
+        log.info("[APPROVAL] Exiting approval mode on terminal %r", terminal_id)
+        frame = self._engine.get_frame(terminal_id)
+        if frame:
+            # Remove transient approval widgets
+            for wid in list(frame.widgets.keys()):
+                if wid.startswith("approval-"):
+                    del frame.widgets[wid]
+
+            # Restore displaced key slots
+            saved = self._approval_saved.pop(terminal_id, {})
+            for idx, wid in saved.items():
+                if idx < len(frame.keymap):
+                    frame.keymap[idx] = wid
+
+        # Clean up state
+        self._approval_active.pop(terminal_id, None)
+        self._approval_active_pid.pop(terminal_id, None)
+        self._approval_mode = bool(self._approval_active)
+
+        # Cooldown — prevent immediate re-entry while agent processes response
+        self._approval_cooldown_until[terminal_id] = _ptime.monotonic() + 1.5
+
+        # Publish
+        await self._bus.publish(Message(
+            type=MessageType.APPROVAL_RESOLVED,
+            source="supervisor",
+            payload={"terminal_id": terminal_id},
+        ))
+
+        # Force push the restored frame
+        if hasattr(self, '_web_server') and hasattr(self, '_renderer') and frame:
+            await self._push_rendered_frame(terminal_id, frame)
+
+    def _update_approval_highlight(self, terminal_id: str) -> None:
+        """Highlight the active approval-target widget on row 0."""
+        frame = self._engine.get_frame(terminal_id)
+        if frame is None:
+            return
+        active_wid = self._approval_active.get(terminal_id)
+        for wid, ws in list(frame.widgets.items()):
+            if wid == active_wid:
+                ws.display.badge = "🎯"
+            elif ws.type.value == "agent" and ws.display.badge == "🎯":
+                ws.display.badge = None
+
+    async def _handle_approval_response(
+        self, terminal_id: str, pid: int, approve: bool
+    ) -> None:
+        """Send the keystroke for an approval decision and exit approval mode."""
+        import time as _ptime
+        from ..platform import send_keys
+
+        text = "y\n" if approve else "n\n"
+        log.info("[APPROVAL] Sending %r to pid=%d on terminal %r",
+                 text.strip(), pid, terminal_id)
+
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, send_keys, pid, text)
+
+        log.info("[APPROVAL] Sent %r → %s", text.strip(), result.get("action", "?"))
+
+        # Cooldown to prevent re-entry while agent processes
+        self._approval_cooldown_until[terminal_id] = _ptime.monotonic() + 3.0
+
+        await self._exit_approval_mode(terminal_id)
 
     def _resolve_display(
         self, agent_name: str, data: dict, display_map: dict
@@ -830,9 +1130,20 @@ class VibeDeckSupervisor:
                         pushed = True
                         log.info("[THINKING] widget %s → %s (%.1fs silence on terminal %s, last_evt=%s, perm=%s)",
                                  widget_id, ds.label, timeout_s, tid, _last_evt, _perm)
+                        # ── Auto-enter approval mode ──────────
+                        if ds.label == "Approval?" and self._auto_enter_approval:
+                            cooldown_end = self._approval_cooldown_until.get(tid, 0)
+                            if _ptime.monotonic() >= cooldown_end:
+                                _a_pid = ws.meta.get("pid", 0)
+                                if _a_pid:
+                                    log.info("[THINKING] Auto-entering approval mode for %s (pid=%d)",
+                                             widget_id, _a_pid)
+                                    asyncio.create_task(
+                                        self._enter_approval_mode(tid, widget_id, _a_pid)
+                                    )
                     # Force immediate frame push for terminals that changed
-                    if pushed and hasattr(self, '_web_server'):
-                        await self._web_server.broadcast_frame(tid, frame)
+                    if pushed and hasattr(self, '_web_server') and hasattr(self, '_renderer'):
+                        await self._push_rendered_frame(tid, frame)
 
             self._thinking_timer = asyncio.create_task(_fire_thinking())
 

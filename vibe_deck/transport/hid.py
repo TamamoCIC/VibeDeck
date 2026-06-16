@@ -50,12 +50,29 @@ class HIDTransport:
         self._deck: Optional["_SDBase"] = None
         self._last_frame_hashes: list[int | None] = []
         self._key_callback = key_callback
+        # Ping throttle — avoid HID I/O at frame-loop rates (30 Hz)
+        self._last_ping: float = 0.0
+        self._ping_interval: float = 5.0
 
     # ── Properties ──────────────────────────────────
 
     @property
     def connected(self) -> bool:
-        return self._deck is not None
+        if self._deck is None:
+            return False
+        # After sleep/wake on Windows the HID handle can go stale
+        # while _deck is still non-None.  Probe the device to be sure,
+        # but throttle to at most once per 5 seconds (fast frame loop
+        # calls this at up to 30 Hz — real HID I/O every frame is wasteful).
+        import time as _time
+        now = _time.monotonic()
+        if now - self._last_ping < self._ping_interval:
+            return True  # recently verified, skip the HID round-trip
+        self._last_ping = now
+        if not self._ping():
+            self._deck = None
+            return False
+        return True
 
     @property
     def deck_type(self) -> str:
@@ -68,6 +85,24 @@ class HIDTransport:
         if not self._deck:
             return 0
         return self._deck.key_count()
+
+    # ── Health check ────────────────────────────────
+
+    def _ping(self) -> bool:
+        """Verify the HID device handle is still valid.
+
+        After Windows sleep/wake cycles the underlying USB handle can
+        go stale even though ``_deck`` is still non-None.  A lightweight
+        serial-number read surfaces broken connections without blocking.
+        """
+        if self._deck is None:
+            return False
+        try:
+            self._deck.get_serial_number()
+            return True
+        except Exception:
+            log.debug("HID health check failed — device handle is stale")
+            return False
 
     # ── Lifecycle ───────────────────────────────────
 

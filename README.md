@@ -144,14 +144,19 @@ All adapters use **passive monitoring** — no agent software modifications requ
 
 ### Roadmap
 
-- [ ] Approval system (approve/reject agent actions from Deck keys)
+#### Next: Approval System (Level B)
+- [ ] Approval Panel Widget Container (on-demand Y/N layout on Deck)
+- [ ] Widget Container infrastructure (rect bounds, layout strategies, presets)
+- [ ] Agent Selector (bubble-sort multi-Agent approval queue)
+- [ ] Keystroke injection (SendInput to Agent terminal on press)
+
+#### Later
+- [ ] Dynamic approval options + small-device layouts
 - [ ] System metric widgets (GPU, CPU, memory)
-- [ ] Multi-Endpoint management UI
-- [ ] Community adapter marketplace + skill distribution
-- [ ] Layout zone system + pagination for large agent pools
-- [ ] systemd daemon integration
 - [ ] MCP client (ingest external MCP server data as widgets)
+- [ ] systemd daemon integration
 - [ ] Linux parity (platform backend feature-complete on par with Windows)
+- [ ] Community adapter marketplace + skill distribution
 
 ## Acknowledgments
 

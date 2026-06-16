@@ -117,6 +117,7 @@
     <div class="ni" data-panel="timing" onclick="show('timing')"><span class="ni-icon">⏱️</span>Timing</div>
     <div class="ni" data-panel="appearance" onclick="show('appearance')"><span class="ni-icon">🎨</span>Appearance</div>
     <div class="ni" data-panel="theme" onclick="show('theme')"><span class="ni-icon">💅</span>Theme</div>
+    <div class="ni" data-panel="approval" onclick="show('approval')"><span class="ni-icon">🛡️</span>Approval</div>
     <div class="nl">Management</div>
     <div class="ni" data-panel="terminals" onclick="show('terminals')"><span class="ni-icon">📡</span>Endpoints</div>
     <div class="ni" data-panel="layouts" onclick="show('layouts')"><span class="ni-icon">📐</span>Layouts</div>
@@ -189,6 +190,34 @@
       </div>
       <button class="btn btn-ac" onclick="saveTheme()" style="margin-top:8px">💾 Save Theme</button>
       <button class="btn" onclick="resetTheme()" style="margin-left:8px">↩ Reset Default</button>
+    </div>
+
+    <!-- ═══ Approval ═══ -->
+    <div class="sp" data-panel="approval" id="pn-approval">
+      <div class="ph"><h2>🛡️ Approval Level B</h2><p>Y/N approval directly from the Stream Deck, no keyboard needed.</p></div>
+      <div class="card">
+        <h3>⚙️ Behavior</h3>
+        <div class="fg">
+          <span class="fl">Auto-enter Approval Mode</span>
+          <label class="tg"><input type="checkbox" id="cfg-auto-enter-approval" onchange="dirty('approval')"><span class="tgs"></span></label>
+          <span class="fh">Automatically switch Deck to Y/N layout when agent needs approval (off = press blinking key to enter)</span>
+        </div>
+      </div>
+      <div class="card">
+        <h3>🎮 How it works</h3>
+        <div class="fg" style="flex-direction:column;align-items:flex-start;gap:4px">
+          <p style="font-size:.78rem;color:var(--text-dim)">When an agent needs approval:</p>
+          <ol style="font-size:.75rem;color:var(--text-dim);margin-left:18px;line-height:1.6">
+            <li>Agent widget blinks 🛡️ "Approval?"</li>
+            <li><strong>Auto</strong>: Deck switches to Y/N layout automatically<br><strong>Manual</strong>: Press the blinking key to enter Y/N layout</li>
+            <li>Rows 1-2 left half = 🟢 YES • right half = 🔴 NO</li>
+            <li>Press any key in YES/NO zone to answer</li>
+            <li>Deck restores normal layout automatically</li>
+          </ol>
+        </div>
+      </div>
+      <button class="btn btn-ac" onclick="saveApproval()">💾 Save Approval Config</button>
+      <span class="fh" style="margin-left:12px" id="approval-dirty" hidden>Unsaved changes</span>
     </div>
 
     <!-- ═══ Endpoints ═══ -->
@@ -272,6 +301,7 @@ function loadPanel(p){
   switch(p){
     case'daemon':ldc();break;case'timing':ltc();lmd();break;
     case'appearance':laa();break;case'theme':lte();break;
+    case'approval':lda();break;
     case'terminals':ltm();break;case'layouts':lly();break;
     case'adapters':lad();break;case'about':lab();break;
   }
@@ -312,6 +342,25 @@ async function saveDaemon(){
     var r=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({port:p,autodetect:ad,render:rd,device_index:di})});
     if(!r.ok){var e=await r.json();throw new Error(e.error||'save failed')}
     clean('daemon');toast('Daemon config saved (restart to apply port/expose)');
+  }catch(e){toast(e.message,'er')}
+}
+
+// ═══════════════════════ Approval ═══════════════════════
+async function lda(){
+  try{
+    var r=await fetch('/api/config');
+    if(!r.ok)throw new Error('offline');
+    var d=await r.json();
+    document.getElementById('cfg-auto-enter-approval').checked=!!d.auto_enter_approval;
+    clean('approval');
+  }catch(e){}
+}
+async function saveApproval(){
+  var ae=document.getElementById('cfg-auto-enter-approval').checked;
+  try{
+    var r=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({auto_enter_approval:ae})});
+    if(!r.ok){var e=await r.json();throw new Error(e.error||'save failed')}
+    clean('approval');toast('Approval config saved');
   }catch(e){toast(e.message,'er')}
 }
 

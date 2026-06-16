@@ -74,6 +74,12 @@ class DarwinBackend:
         """TODO: CGWindowListCopyWindowInfo + terminal bundle check."""
         return None
 
+    # ── Keystroke injection (TODO) ─────────────────────────
+
+    def send_keys(self, pid: int, text: str) -> dict:
+        """TODO: Implement via osascript or CGEventPost."""
+        return {"action": "error", "message": "send_keys not implemented on macOS"}
+
     # ── Process tools (/proc fallback, TODO: proc_pidinfo) ─
 
     def get_parent_pid(self, pid: int) -> int | None:

@@ -41,11 +41,29 @@ A self-contained display-and-interaction unit that occupies one key cell on an E
 
 Widgets are the atomic building block — every key is a Widget.
 
-### Widget Group
+### Widget Container
 
-A set of Widgets arranged together to accomplish one coherent function. For example, an approval flow might spread across 2–4 keys: one for confirm, one for cancel, one for detail.
+A rectangular region on an Endpoint that occupies multiple key cells (e.g. 1×8, 2×4, 4×8) and manages its own sub-grid of Widgets. A Widget Container has:
 
-The user arranges Widgets and Widget Groups freely across their device layout. VibeDeck ships preset layout templates for different device sizes (Mini, Standard, XL).
+- **Bounds** — a `rect` (start_row, start_col, rows, cols) within the Endpoint grid. Containers must not overlap.
+- **Layout strategy** — how its child Widgets are arranged: pin (fixed position), bubble-sort (most-recent-first), flow (auto-fill).
+- **Reusability** — Containers can be saved as presets and dropped onto any Layout, like an Android home-screen widget that you resize and reposition.
+- **State** — a Container receives frame ticks from its parent Endpoint and produces a sub-frame for its own region.
+
+A Widget Container subsumes two earlier draft concepts:
+
+| Old concept | Relationship to Widget Container |
+|---|---|
+| **Zone** (planned v0.2) | A Zone is a Container with fixed bounds — nothing more. |
+| **Widget Group** | A Widget Group is the *contents* of a Container — the set of child Widgets inside it. |
+
+Examples:
+
+- **Agent Selector** — a 1×N Container with bubble-sort strategy. Active Agent Widgets appear in most-recent-activity order. The first agent to need approval blinks and rises to the top.
+- **Approval Panel** — a 2×N Container that appears on-demand. When an Agent needs user approval, its child Widgets map to answer choices (Yes / No / Continue / Cancel).
+- **Utility Strip** — a 1×N Container pinned to the bottom row, holding system Widgets (clock, GPU meter, settings gear).
+
+Containers are the intermediate building block between Widgets (1 key) and Layouts (whole grid). A Layout is a set of non-overlapping Containers.
 
 ### Agent
 
@@ -61,15 +79,26 @@ VibeDeck ships with built-in adapters (Claude Code, Codex, Hermes, etc.). The co
 
 ### Approval System（审批系统）
 
-> 📋 **Planned.** VibeDeck's mechanism for letting the user approve, reject, or inspect actions that an Agent requests at runtime. Three interaction modes:
+> 📋 **Planned — next priority after v0.1.** VibeDeck's mechanism for letting the user approve, reject, or inspect actions that an Agent requests at runtime — without leaving the Deck.
+
+The Approval System is implemented as a **Widget Container** (the "Approval Panel") that replaces part of the normal layout when an Agent enters an approval-required state. Message types (`APPROVAL_REQUESTED`, `APPROVAL_RESOLVED`) and `WidgetType.APPROVAL` are defined in the codebase.
+
+**First milestone (Level B): Y/N approval on 4×8 XL.**
+
+- Agent Selector row (top) shows which Agent needs approval — blinking 🛡️.
+- Approval Panel (rows 1-2) replaces normal content: left 4×2 region = green YES, right 4×2 region = red NO. Both support fuzzy click (any key in the region triggers the action).
+- On press, VibeDeck sends the keystroke to the Agent's terminal window via platform.SendInput.
+- Auto-enter mode (configurable): Deck switches to approval layout as soon as an Agent needs approval. Manual-enter mode: user presses the blinking Agent key to enter approval layout.
+
+**Later milestones:**
 
 | Mode | Behaviour |
 |---|---|
-| **Focused（聚焦式）** | Single Agent is in focus; its multi-option questions map directly to keys A/B/C/D. Press to answer. |
-| **Multi-Agent（多Agent）** | Multiple Agents may each request approval. The approval zone shows blinking icons; pressing one expands it into focused mode. |
+| **Focused（聚焦式）** | Single Agent in focus; its multi-option questions map directly to keys. Press to answer. |
+| **Multi-Agent（多Agent）** | Multiple Agents may each request approval. The Agent Selector row shows blinking icons; pressing one switches the Approval Panel to that Agent's context. |
 | **Ceremonial（仪式性）** | A high-stakes request (e.g. granting root access) that spans large red/green zones to force a deliberate pause. |
-
-The approval system is rendered as a Widget Group inside the approval zone of the current layout. Message types (`APPROVAL_REQUESTED`, `APPROVAL_RESOLVED`) and `WidgetType.APPROVAL` are defined in the codebase but no flow logic is implemented yet.
+| **Dynamic options** | Approval Panel reads the actual question/options from hook data (when available) and renders per-option keys instead of fixed Y/N. |
+| **Small-device layouts** | Compact approval layouts for 3×5 and phone grids.
 
 ## Communication Model
 
@@ -94,15 +123,17 @@ Virtual Renderers (browser, phone, tablet) connect to the daemon over LAN via SS
 
 ## Layout
 
-The user's Endpoint grid holds widgets; each Endpoint has its own layout sizing (e.g. Stream Deck XL = 4×8, phone = app-defined grid). Layouts are saved/loaded as YAML files under `~/.vibe-deck/layouts/`.
+A Layout is a set of non-overlapping [Widget Containers](#widget-container) arranged on an Endpoint grid. Each Endpoint has its own layout sizing (e.g. Stream Deck XL = 4×8, phone = app-defined grid). Layouts are saved/loaded as YAML files under `~/.vibe-deck/layouts/`.
 
-> 📋 **Zone system is planned for v0.2.** The current v0.1 layout is a flat widget list with a shared widget pool. The planned zone breakdown:
+The current v0.1 layout is a flat widget list backed by a single implicit Container that spans the full grid. Explicit multi-Container support (with rect bounds, layout strategies, and Container-level presets) is the next step beyond v0.1.
 
-| Zone | What lives there |
-|---|---|
-| **Approval zone** | Fixed-position Widget Group for incoming approval requests. Dark when idle, lit + blinking when a request arrives. |
-| **Agent zone** | Dynamic Widgets — one per active Agent, auto-assigned. Agents come and go as processes start and stop. Paginated when space runs out. |
-| **Utility zone** | System Widgets (GPU, CPU, clock), navigation (next page, prev page), voice shortcut, settings. |
+Typical Container breakdown on a 4×8 grid:
+
+| Row(s) | Container | Strategy |
+|---|---|---|
+| 0 | Agent Selector (1×8) | Bubble-sort — most recent activity rises left |
+| 1–2 | Approval Panel (2×8) | On-demand — replaces normal content when an Agent needs approval |
+| 3 | Utility Strip (1×8) | Pin — fixed-position system widgets and navigation |
 
 ## Display Primitives
 
@@ -243,28 +274,29 @@ All four adapters use **passive monitoring** — no agent software modifications
 - **Project identity** — cwd-driven project name extraction
 - **Pause detection** — recognizes Claude Code stop hooks
 
-## v0.1 Scope — Planned (not yet built)
+## v0.2 Scope — Next
 
-### 📋 Widgets
+Dogfooding-driven priorities. Focus: make VibeDeck indispensable for a single Windows user with 2–3 parallel Claude Code sessions on a 4×8 Stream Deck XL.
 
-- **Approval System** — Focused/Multi-Agent/Ceremonial modes. Message types defined but no flow logic.
-- **Toggle / Command** — press-to-trigger shortcut key (stub only)
-- **Static Info** — text/image display (clock, git status, etc.)
+### 🎯 Primary: Approval System — Level B (Y/N from Deck)
 
-### 📋 Layout
+- **Approval Panel Widget Container** — on-demand 2×8 Container that replaces normal layout rows when an Agent needs approval
+- **Agent Selector** — first-row bubble-sort Container for multi-Agent approval queue
+- **Keystroke injection** — SendInput to the Agent's terminal window on YES/NO press
+- **Auto/manual enter modes** — configurable `auto_enter_approval`
+- **Container infrastructure** — `rect` bounds, layout strategies (pin, bubble-sort, flow), YAML serialization
 
-- **Zone system** — Approval zone, Agent zone, Utility zone with pagination
-- **Preset templates** — per-device-size layout templates (XL, Standard, Mini, Phone)
+### 📋 Later (not scheduled)
 
-### 📋 Integration
-
-- **systemd daemon** — currently foreground process only
-- **MCP Client** — connect to external MCP servers for monitoring data
-- **WebSocket bidirectional channel** — currently SSE (server→client) only; agents communicate via file watch
-- **Community adapter marketplace** — `adapter.yaml` parser and discovery in `~/.vibe-deck/adapters/`
-- **Skill distribution system** — full install/remove with `skill.yaml` format
-- **System metric widgets** — GPU, CPU, memory, disk
-- **Linux platform parity** — feature-complete on par with Windows backend
+- Dynamic approval options (read question text from hook data)
+- Small-device approval layouts (3×5, phone)
+- Ceremonial mode
+- systemd daemon mode
+- MCP Client
+- System metric widgets (GPU, CPU, memory)
+- Linux platform parity
+- Community adapter marketplace
+- Skill distribution system
 
 ## Resilience
 

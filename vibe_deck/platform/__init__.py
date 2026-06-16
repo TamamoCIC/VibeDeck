@@ -75,6 +75,15 @@ def find_and_cache_hwnd(pid: int) -> int | None:
     return _backend.find_and_cache_hwnd(pid)
 
 
+def send_keys(pid: int, text: str) -> dict:
+    """Type *text* into the terminal window for *pid*.
+
+    Returns ``{"action": "sent", "text": text}`` on success, or an
+    error dict on failure.
+    """
+    return _backend.send_keys(pid, text)
+
+
 # ── Process tools ─────────────────────────────────────────
 
 def get_parent_pid(pid: int) -> int | None:
@@ -138,6 +147,7 @@ __all__ = [
     "clear_hwnd_cache",
     "clear_toggle_state",
     "find_and_cache_hwnd",
+    "send_keys",
     # Process tools
     "get_parent_pid",
     "get_process_name",

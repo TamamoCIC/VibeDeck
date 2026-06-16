@@ -699,6 +699,18 @@ class VibeDeckWebServer:
                 {"error": f"failed to activate {widget_id!r} on {terminal_id!r}"},
                 status=404)
 
+        # Force immediate frame push so the physical device updates instantly.
+        if self._bus and hasattr(self, '_renderer') and self._renderer:
+            try:
+                from ..core.message_bus import Message, MessageType
+                await self._bus.publish(Message(
+                    type=MessageType.LAYOUT_CHANGED,
+                    source="web",
+                    payload={"terminal_id": terminal_id, "widget_id": widget_id},
+                ))
+            except Exception:
+                pass  # best-effort — frame loop will catch it on next tick
+
         # Determine the key where the widget landed
         frame = self._engine.get_frame(terminal_id)
         placed_key = None
@@ -730,6 +742,19 @@ class VibeDeckWebServer:
 
         self._engine.pool_deactivate(widget_id, terminal_id)
         log.info("Pool widget %r deactivated from terminal %r", widget_id, terminal_id)
+
+        # Force immediate frame push
+        if self._bus:
+            try:
+                from ..core.message_bus import Message, MessageType
+                await self._bus.publish(Message(
+                    type=MessageType.LAYOUT_CHANGED,
+                    source="web",
+                    payload={"terminal_id": terminal_id, "widget_id": widget_id},
+                ))
+            except Exception:
+                pass
+
         return web.json_response({"status": "ok"})
 
     async def _pool_delete_handler(self, request: web.Request) -> web.Response:
@@ -749,7 +774,16 @@ class VibeDeckWebServer:
             # Remove from all terminals first, then push updated frames
             for tid in self._engine.list_terminals():
                 self._engine.remove_widget(widget_id, tid)
-                await self.broadcast_frame(tid)
+                if self._bus:
+                    try:
+                        from ..core.message_bus import Message, MessageType
+                        await self._bus.publish(Message(
+                            type=MessageType.LAYOUT_CHANGED,
+                            source="web",
+                            payload={"terminal_id": tid, "widget_id": widget_id},
+                        ))
+                    except Exception:
+                        pass
 
             # Remove from pool
             self._engine.pool_remove(widget_id)
@@ -852,6 +886,7 @@ class VibeDeckWebServer:
             "autodetect": cfg.autodetect,
             "render": cfg.render,
             "device_index": cfg.device_index,
+            "auto_enter_approval": cfg.auto_enter_approval,
             "timing": cfg.timing.to_dict(),
             "adapter_configs": [a.to_dict() for a in cfg.adapter_configs],
         })
@@ -881,6 +916,8 @@ class VibeDeckWebServer:
             cfg.render = str(body["render"])
         if "device_index" in body:
             cfg.device_index = int(body["device_index"])
+        if "auto_enter_approval" in body:
+            cfg.auto_enter_approval = bool(body["auto_enter_approval"])
 
         # Merge timing sub-config
         if "timing" in body and isinstance(body["timing"], dict):
