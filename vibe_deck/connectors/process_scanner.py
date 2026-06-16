@@ -38,7 +38,7 @@ class ProcessScanner(BaseConnector):
         super().__init__("process-scanner", bus)
         self._patterns = patterns
         self._interval = interval
-        self._known: dict[int, tuple[str, psutil.Process]] = {}  # pid → (agent_name, process)
+        self._known: dict[int, tuple[str, str, psutil.Process]] = {}  # pid → (agent_name, cwd, process)
         self._task: asyncio.Task | None = None
 
     async def start(self) -> None:
@@ -70,7 +70,7 @@ class ProcessScanner(BaseConnector):
 
     async def _scan_once(self) -> None:
         """Single scan iteration."""
-        current: dict[int, tuple[str, psutil.Process]] = {}
+        current: dict[int, tuple[str, str, psutil.Process]] = {}
 
         for proc in psutil.process_iter(["pid", "name", "cmdline"]):
             try:
@@ -93,19 +93,26 @@ class ProcessScanner(BaseConnector):
                             import re
                             if not re.search(pattern.cmdline_regex, cmdline_str):
                                 continue
-                        current[proc.pid] = (pattern.name, proc)
+                        # Extract working directory for identity tracking
+                        cwd = ""
+                        try:
+                            cwd = proc.cwd() or ""
+                        except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+                            pass
+                        current[proc.pid] = (pattern.name, cwd, proc)
                         break  # first matching pattern wins
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
 
         # Detect new agents
-        for pid, (name, proc) in current.items():
+        for pid, (name, cwd, proc) in current.items():
             if pid not in self._known:
-                log.info("Agent detected: %s (pid=%s)", name, pid)
+                log.info("Agent detected: %s (pid=%s, cwd=%s)", name, pid, cwd)
                 await self._publish(MessageType.AGENT_ONLINE, {
                     "agent_name": name,
                     "pid": pid,
                     "widget_id": f"{name}-{pid}",
+                    "cwd": cwd,
                 })
                 # Early HWND binding — try to find the terminal window
                 # now so the focus button works from the first click.
@@ -120,12 +127,13 @@ class ProcessScanner(BaseConnector):
         # Detect gone agents
         for pid in list(self._known):
             if pid not in current:
-                gone_name = self._known[pid][0]
+                gone_name, gone_cwd, _ = self._known[pid]
                 log.info("Agent gone: %s (pid=%s)", gone_name, pid)
                 await self._publish(MessageType.AGENT_OFFLINE, {
                     "agent_name": gone_name,
                     "pid": pid,
                     "widget_id": f"{gone_name}-{pid}",
+                    "cwd": gone_cwd or "",
                 })
                 # Clean up window focus state for the gone agent
                 try:

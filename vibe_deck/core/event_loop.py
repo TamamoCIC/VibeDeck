@@ -424,9 +424,10 @@ class VibeDeckSupervisor:
             agent_name = msg.payload.get("agent_name", "unknown")
             pid = msg.payload.get("pid", 0)
             widget_id = msg.payload.get("widget_id", f"{agent_name}-{pid}")
+            cwd = msg.payload.get("cwd", "")
 
-            log.info("[AGENT] %s detected (pid=%d) → widget %s on terminal %r",
-                     agent_name, pid, widget_id, terminal_id)
+            log.info("[AGENT] %s detected (pid=%d, cwd=%s) → widget %s",
+                     agent_name, pid, cwd, widget_id)
 
             # Create a placeholder WidgetState — PID stored in meta for
             # "vibe-deck whoami" lookups, but widget_id kept as-is so
@@ -434,8 +435,24 @@ class VibeDeckSupervisor:
             # the same widget.
             ds = DisplayState(icon="🆕", color="#64748b", animation="pulse", label="Starting")
             ws = WidgetState(id=widget_id, type=WidgetType.AGENT, display=ds,
-                             meta={"agent": agent_name, "pid": pid})
-            self._engine.pool_add(ws)  # pool only — user activates on terminals
+                             meta={"agent": agent_name, "pid": pid, "cwd": cwd})
+
+            # ── cwd-aware merge: if a dead widget exists with the same
+            # (agent_name, cwd), reuse its terminal placements so a
+            # process restart doesn't lose the layout. ──
+            merged = False
+            if cwd:
+                merge_target = self._engine.pool_find_merge_candidate(
+                    agent_name, cwd, pid
+                )
+                if merge_target:
+                    log.info("[AGENT] %s (pid=%d) → MERGING into %s (cwd=%s)",
+                             agent_name, pid, merge_target, cwd)
+                    self._engine.pool_rekey(merge_target, widget_id, ws)
+                    merged = True
+
+            if not merged:
+                self._engine.pool_add(ws)  # pool only — user activates on terminals
 
         elif msg.type == MessageType.AGENT_OFFLINE:
             agent_name = msg.payload.get("agent_name", "unknown")

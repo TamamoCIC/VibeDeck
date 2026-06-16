@@ -391,6 +391,78 @@ class LayoutEngine:
         return [tid for tid in self.list_terminals()
                 if self.pool_is_activated(widget_id, tid)]
 
+    def pool_find_merge_candidate(
+        self, agent_name: str, cwd: str, exclude_pid: int
+    ) -> str | None:
+        """Find a dead pool widget matching *(agent_name, cwd)* for merging.
+
+        Searches the pool for a widget whose PID is dead (so the original
+        process has exited) and whose ``meta["agent"]`` and ``meta["cwd"]``
+        match.  Returns the widget_id if **exactly one** candidate exists;
+        returns ``None`` for zero or multiple candidates (ambiguous → caller
+        should not merge).
+
+        The *exclude_pid* is typically the newly-discovered process PID to
+        avoid matching a live widget that already represents the same PID.
+        """
+        import psutil
+
+        candidates: list[str] = []
+        for wid, ws in self._pool.items():
+            if ws.meta.get("agent") != agent_name:
+                continue
+            if ws.meta.get("cwd") != cwd:
+                continue
+            old_pid = ws.meta.get("pid", 0)
+            if not old_pid or old_pid == exclude_pid:
+                continue
+            try:
+                if not psutil.pid_exists(old_pid):
+                    candidates.append(wid)
+            except Exception:
+                continue
+
+        if len(candidates) == 1:
+            return candidates[0]
+        return None
+
+    def pool_rekey(
+        self, old_widget_id: str, new_widget_id: str, new_ws: WidgetState
+    ) -> bool:
+        """Replace a pool entry under a new ID, preserving terminal placements.
+
+        Every terminal frame that references *old_widget_id* is updated to
+        reference *new_widget_id*, and the ``WidgetState`` on those frames
+        is replaced with *new_ws*.  The old pool entry is removed.
+
+        Returns ``True`` if the old entry was found and rekeyed.
+        """
+        if old_widget_id not in self._pool:
+            return False
+
+        new_ws.id = new_widget_id
+
+        # Replace pool entry under new key
+        self._pool[new_widget_id] = new_ws
+        del self._pool[old_widget_id]
+
+        # Update all terminal frames
+        for tid in self.list_terminals():
+            frame = self.get_frame(tid)
+            if frame is None:
+                continue
+            # Update widgets dict — replace key, update stored WidgetState
+            if old_widget_id in frame.widgets:
+                frame.widgets[new_widget_id] = frame.widgets.pop(old_widget_id)
+                frame.widgets[new_widget_id].id = new_widget_id
+            # Update keymap references
+            frame.keymap = [
+                new_widget_id if wid == old_widget_id else wid
+                for wid in frame.keymap
+            ]
+
+        return True
+
     # ── Persistence ───────────────────────────────
 
     def save_layout(self, path: str, terminal_id: str = DEFAULT_TERMINAL) -> None:
