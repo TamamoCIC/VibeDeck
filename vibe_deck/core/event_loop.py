@@ -556,6 +556,22 @@ class VibeDeckSupervisor:
                 ds.color = "#eab308"
                 ds.icon = "⏸️"
 
+            # ── Network error detection ──────────────────────
+            # If Stop arrives without stop_hook_active (not a user
+            # Ctrl+C) while the widget was in an active state, the
+            # Stop was likely triggered by a socket disconnect or
+            # API timeout rather than a clean session end.
+            _ACTIVE_STATES = {"Running", "Thinking", "Tool", "Writing", "Compact"}
+            if _hook_event == "Stop" and not data.get("stop_hook_active"):
+                _prev_pool = self._engine.pool_get(widget_id)
+                if _prev_pool and _prev_pool.display.label in _ACTIVE_STATES:
+                    ds.icon = "🔌"
+                    ds.color = "#f59e0b"
+                    ds.animation = "blink"
+                    ds.label = "Net Error"
+                    log.info("[HOOK→UI] Stop while %s → network error",
+                             _prev_pool.display.label)
+
             # ── Project identity (from cwd) ──────────────────
             # Extract project name from working directory so the Pool
             # and Deck show human-readable project labels (e.g. "VibeDeck",
@@ -1118,7 +1134,7 @@ class VibeDeckSupervisor:
                         current_label = ws.display.label
                         current_anim = ws.display.animation.value if hasattr(ws.display.animation, 'value') else str(ws.display.animation)
                         # Definitive states — never overwrite.
-                        if current_label in ("Idle", "Offline", "Error", "Sub done", "Paused", "Asking..."):
+                        if current_label in ("Idle", "Offline", "Error", "Sub done", "Paused", "Asking...", "Net Error"):
                             continue
                         if current_anim in ("blink",):
                             continue
