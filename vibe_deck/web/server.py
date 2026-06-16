@@ -372,29 +372,23 @@ class VibeDeckWebServer:
         # Publish to MessageBus so the supervisor can react
         if self._bus:
             from ..core.message_bus import Message, MessageType
-            try:
-                frame = self._engine.get_frame(terminal_id)
-                widgets = list(frame.widgets.keys()) if frame else []
-                widget_at_key = None
-                for wid, ws in (frame.widgets.items() if frame else {}):
-                    if ws.key_index == index:
-                        widget_at_key = ws.id
-                        break
+            frame = self._engine.get_frame(terminal_id)
+            widget_at_key = None
+            if frame is not None:
+                ws = frame.get_widget_at(index)
+                if ws is not None:
+                    widget_at_key = ws.id
 
-                import asyncio
-                asyncio.create_task(
-                    self._bus.publish(Message(
-                        type=MessageType.KEY_PRESSED,
-                        source="web-server",
-                        payload={
-                            "terminal_id": terminal_id,
-                            "key": index,
-                            "widgets_at_key": widget_at_key or "none",
-                        },
-                    ))
-                )
-            except Exception:
-                log.debug("Failed to publish key press", exc_info=True)
+            await self._bus.publish(Message(
+                type=MessageType.KEY_PRESSED,
+                source="web-server",
+                payload={
+                    "terminal_id": terminal_id,
+                    "key": index,
+                    "pressed": True,
+                    "widgets_at_key": widget_at_key or "none",
+                },
+            ))
 
         return web.json_response({
             "status": "ok",
@@ -718,9 +712,10 @@ class VibeDeckWebServer:
             try:
                 placed_key = frame.keymap.index(widget_id)
             except ValueError:
-                for kw_id, kw_ws in frame.widgets.items():
-                    if kw_id == widget_id:
-                        placed_key = kw_ws.key_index
+                # Fallback: linear scan (widget was placed but keymap is out of sync)
+                for i, wid in enumerate(frame.keymap):
+                    if wid == widget_id:
+                        placed_key = i
                         break
 
         log.info("Pool widget %r activated on terminal %r at key %s",
