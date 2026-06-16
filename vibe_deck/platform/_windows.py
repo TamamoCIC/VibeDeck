@@ -299,7 +299,13 @@ class WindowsBackend:
 
         if not is_foreground:
             # ── Agent not in front → save current, focus agent ──
-            self._saved_foreground[pid] = current_fg
+            # Skip saving when current_fg is a terminal window —
+            # terminal-to-terminal saves cause cross-agent contamination
+            # where _saved_foreground[pid2] ends up pointing to agent-1's
+            # HWND, making button-2 restore window-1 on the next toggle.
+            current_fg_cls = self._get_window_class(current_fg) if current_fg else ""
+            if current_fg_cls not in _TERMINAL_CLASSES:
+                self._saved_foreground[pid] = current_fg
             ok = self._bring_to_foreground(agent_hwnd)
             if not ok and used_cache:
                 log.warning("Toggle: focus failed with cached hwnd=%d — retrying with fresh find",
